@@ -266,13 +266,17 @@ if(!lsGet("kumo_cfg")&&!embedded)CFG.v=3;
 if(!(CFG.v>=2)){CFG.products.forEach(function(p){p.otpMode="link"});if(!CFG.shop.otpLine)CFG.shop.otpLine="https://lin.ee/yeNKQBW";CFG.v=2}
 if(!(CFG.v>=3)){var PY=CFG.payment;PY.mainLabel="กสิกรไทย";PY.promptpay="240-1-81128-4";PY.promptpayName="APHINYA PH.";PY.autoQr=false;PY.qrImage=SHOP_QR;PY.banks=[];PY.note=DEFAULTS.payment.note;CFG.v=3;
   try{if(localStorage.getItem("kumo_cfg"))localStorage.setItem("kumo_cfg",JSON.stringify(CFG))}catch(e){}}
-var DATA = lsGet("kumo_data") || {
-  user:{name:"",contact:"",balance:0},
-  orders:[{id:"OD-SAMPLE",sample:true,pid:"netflix",product:"Netflix Premium",plan:"จอเสริม 1 เดือน",price:109,cred:"ตัวอย่าง@mail.com | Demo1234 | โปรไฟล์ 3 | PIN 1234",at:Date.now()-3600e3,otp:{status:"ready",code:"482913",at:Date.now()}}],
-  topups:[],tickets:[]
-};
+var DATA = lsGet("kumo_data") || {accounts:[],session:null,orders:[],topups:[],tickets:[]};
+if(!DATA.accounts){DATA.accounts=[];DATA.session=null;delete DATA.user;DATA.orders=(DATA.orders||[]).filter(function(o){return !o.sample})}
+function me(){return DATA.accounts.find(function(a){return a.u===DATA.session})||null}
+function bal(){var m=me();return m?m.balance:0}
+function acct(u){return DATA.accounts.find(function(a){return a.u===u})}
+function mine0(l){return mine(l)}
+function mine(list){return list.filter(function(x){return DATA.session&&x.user===DATA.session})}
+function myOrders(){return mine(DATA.orders)}
+function who(x){var a=acct(x.user);return x.user?(x.user+(a?" · "+a.email:"")):(x.buyer||"-")}
 function saveCfg(){lsSet("kumo_cfg",CFG)}
-function saveData(){lsSet("kumo_data",DATA)}
+function saveData(){return lsSet("kumo_data",DATA)}
 var UI={cat:"ทั้งหมด",q:"",histTab:"orders",topMethod:"promptpay",topAmt:100,slip:"",reportImg:"",adminTab:"orders",admin:false,editing:null,lastBuy:null};
 try{UI.admin=sessionStorage.getItem("kumo_admin")==="1"}catch(e){}
 
@@ -312,8 +316,9 @@ function logo(p,sm){return '<div class="logo'+(sm?' sm':'')+'" style="background
 /* ---------- shell ---------- */
 function renderShell(){
   $("#brand").innerHTML=miniCloud()+'<b>'+esc(CFG.shop.name)+'</b>';
-  $("#wallet").innerHTML=baht(DATA.user.balance)+' ฿ <i>+</i>';
-  $("#wallet").setAttribute("aria-label","ยอดเงินคงเหลือ "+baht(DATA.user.balance)+" บาท กดเพื่อเติมเงิน");
+  var w=$("#wallet");
+  if(me()){w.innerHTML=baht(bal())+' ฿ <i>+</i>';w.setAttribute("href","#topup");w.removeAttribute("data-act");w.setAttribute("aria-label","ยอดเงินคงเหลือ "+baht(bal())+" บาท กดเพื่อเติมเงิน")}
+  else{w.innerHTML='เข้าสู่ระบบ <i>›</i>';w.setAttribute("href","#more");w.setAttribute("data-act","auth");w.setAttribute("aria-label","เข้าสู่ระบบหรือสมัครสมาชิก")}
   var r=route().name;
   var tabs=[["home","หน้าแรก","home"],["products","สินค้า","bag"],["history","ประวัติ","clock"],["topup","เติมเงิน","coin"],["more","เมนู","menu"]];
   var map={product:"products",otp:"more",howto:"more",contact:"more",report:"more",admin:"more"};
@@ -366,7 +371,7 @@ V.product=function(r){
   '<p style="margin:0">'+nl(p.desc)+'</p><div class="row"><span class="pill pink">🔑 '+otpTxt+'</span><span class="pill">⚡ ได้รหัสทันทีหลังซื้อ</span></div></section>'+
   '<section class="card"><h2 class="h2">เลือกแพ็กเกจ</h2><div class="plans">'+
    p.plans.map(function(x){var out=!x.stock.length||p.soldOut;return '<label class="plan'+(UI.sel===x.id?' on':'')+(out?' out':'')+'"><input type="radio" name="plan" data-act="plan" value="'+esc(x.id)+'"'+(UI.sel===x.id?' checked':'')+(out?' disabled':'')+'><span class="grow"><b>'+esc(x.name)+'</b><br><span class="meta">'+(out?'สินค้าหมด':'เหลือ '+x.stock.length+' ชิ้น')+'</span></span><span class="price">'+baht(x.price)+' ฿</span></label>'}).join("")+
-  '</div><div class="note">ยอดเงินของคุณ <b>'+baht(DATA.user.balance)+' ฿</b></div>'+
+  '</div><div class="note">'+(me()?'ยอดเงินของคุณ <b>'+baht(bal())+' ฿</b>':'เข้าสู่ระบบหรือสมัครสมาชิกก่อนซื้อ')+'</div>'+
   '<button class="btn block pink" data-act="buy" data-pid="'+esc(p.id)+'"'+(p.soldOut?' disabled':'')+'>'+(p.soldOut?'สินค้าหมด':'ซื้อเลย')+'</button></section>'+
   '<details class="acc"><summary>'+icon("book","#6b56c9").replace("<svg",'<svg width="22" height="22"')+'วิธีเข้าใช้งาน '+esc(p.name)+'</summary><div class="body"><ol class="steps">'+steps(p.howto)+'</ol></div></details>';
 };
@@ -380,7 +385,7 @@ function credHtml(o){
 function otpHtml(o){
   var p=product(o.pid)||{otpMode:"request"};
   if(p.otpMode==="none")return '<div class="note">บริการนี้ไม่ต้องใช้ OTP</div>';
-  if(p.otpMode==="link"){var u=p.otpUrl||CFG.shop.otpLine;return '<div class="otp-box"><div class="row between"><b>รับโค้ด OTP 6 หลัก</b><span class="pill ok">ผ่าน LINE</span></div><ol class="steps" style="font-size:14px"><li>กดปุ่มด้านล่างเพื่อแอดเพื่อน LINE OFFICIAL ของร้าน</li><li>ส่งเลขออเดอร์ <b>'+esc(o.id)+'</b> ในแชต</li><li>รับโค้ด 6 หลัก แล้วนำไปกรอกในแอป</li></ol><button class="btn soft sm" data-act="copy" data-v="'+esc(o.id)+'" style="align-self:flex-start">คัดลอกเลขออเดอร์</button>'+(u?'<a class="btn block" href="'+esc(u)+'" target="_blank" rel="noopener" style="background:#06c755;box-shadow:0 4px 0 #04a347">แอดเพื่อน LINE รับโค้ด</a>':'<span class="note warn">ร้านยังไม่ได้ใส่ลิงก์ LINE รับ OTP</span>')+'</div>'}
+  if(p.otpMode==="link"){var u=p.otpUrl||CFG.shop.otpLine;return '<div class="otp-box"><div class="row between"><b>รับโค้ด OTP 6 หลัก</b><span class="pill ok">ผ่าน LINE</span></div><ol class="steps" style="font-size:14px"><li>กดปุ่มด้านล่างเพื่อแอดเพื่อน LINE OFFICIAL ของร้าน</li><li>ส่ง <b>ชื่อยูสเซอร์</b> และ <b>เลขออเดอร์</b> ในแชต</li><li>รับโค้ด 6 หลัก แล้วนำไปกรอกในแอป</li></ol>'+userNote(o)+''+(u?'<a class="btn block" href="'+esc(u)+'" target="_blank" rel="noopener" style="background:#06c755;box-shadow:0 4px 0 #04a347">แอดเพื่อน LINE รับโค้ด</a>':'<span class="note warn">ร้านยังไม่ได้ใส่ลิงก์ LINE รับ OTP</span>')+'</div>'}
   var s=o.otp||{status:"none"},ttl=(Number(CFG.shop.otpTtl)||10)*60e3;
   if(s.status==="ready"&&Date.now()-s.at<ttl){
     var left=Math.max(0,Math.ceil((ttl-(Date.now()-s.at))/60e3));
@@ -389,30 +394,33 @@ function otpHtml(o){
   if(s.status==="waiting")return '<div class="otp-box"><div class="row between"><b>รหัส OTP</b><span class="pill warn">กำลังรอรหัส</span></div><span class="meta">ขอเมื่อ '+fmtDate(s.req)+' · กดรหัสในแอปแล้วรอสักครู่ รหัสจะขึ้นตรงนี้ กดรีเฟรชเพื่อดู</span><div class="row"><button class="btn soft sm" data-act="refresh">รีเฟรช</button><button class="btn ghost sm" data-act="otp-cancel" data-id="'+esc(o.id)+'">ยกเลิกคำขอ</button></div></div>';
   return '<div class="otp-box"><b>รหัส OTP</b><span class="meta">'+(s.status==="ready"?"รหัสเดิมหมดอายุแล้ว ":"")+'เมื่อแอปขอรหัสยืนยัน กดปุ่มนี้เพื่อรับรหัส</span><button class="btn block" data-act="otp" data-id="'+esc(o.id)+'">กดรับ OTP</button></div>';
 }
+function userNote(o){var u=(o&&o.user)||DATA.session||"";var msg="ขอ OTP\nยูสเซอร์: "+u+(o?"\nออเดอร์: "+o.id:"");
+  return '<div class="note warn" style="display:flex;flex-direction:column;gap:6px"><b>⚠️ สำคัญ: ทุกครั้งที่ขอ OTP ต้องแนบชื่อยูสเซอร์ของคุณไปด้วย</b>'+(u?'<span>ยูสเซอร์ของคุณ: <b>'+esc(u)+'</b>'+(o?' · ออเดอร์ <b>'+esc(o.id)+'</b>':'')+'</span><button class="btn soft sm" data-act="copy" data-v="'+esc(msg)+'" style="align-self:flex-start">คัดลอกข้อความส่งร้าน</button>':'<span>เข้าสู่ระบบก่อนเพื่อดูชื่อยูสเซอร์ของคุณ</span>')+'</div>'}
 function orderCard(o,withOtp){
   return '<article class="card"><div class="row between" style="flex-wrap:nowrap;align-items:flex-start"><div class="col" style="gap:2px"><b>'+esc(o.product)+'</b><span class="meta">'+esc(o.plan)+' · '+fmtDate(o.at)+'</span><span class="meta">เลขออเดอร์ '+esc(o.id)+(o.sample?' (ตัวอย่าง)':'')+'</span></div><span class="price">'+baht(o.price)+' ฿</span></div>'+
    credHtml(o)+(withOtp!==false?otpHtml(o):'')+
    '<div class="row"><a class="btn soft sm" href="#howto" data-act="howto-go" data-pid="'+esc(o.pid)+'">วิธีเข้าใช้งาน</a><a class="btn ghost sm" href="#report" data-act="report-go" data-id="'+esc(o.id)+'">แจ้งปัญหา</a></div></article>';
 }
 V.history=function(){
+  if(!me())return loginWall("ดูประวัติการซื้อ");
   var tab=UI.histTab;
-  var h='<h2 class="h2"><span class="star">★</span>ประวัติการซื้อ</h2><div class="seg"><button data-act="hist" data-v="orders" class="'+(tab==="orders"?"on":"")+'">ออเดอร์ ('+DATA.orders.length+')</button><button data-act="hist" data-v="topups" class="'+(tab==="topups"?"on":"")+'">เติมเงิน ('+DATA.topups.length+')</button></div>';
+  var h='<h2 class="h2"><span class="star">★</span>ประวัติการซื้อ</h2><div class="seg"><button data-act="hist" data-v="orders" class="'+(tab==="orders"?"on":"")+'">ออเดอร์ ('+myOrders().length+')</button><button data-act="hist" data-v="topups" class="'+(tab==="topups"?"on":"")+'">เติมเงิน ('+mine(DATA.topups).length+')</button></div>';
   if(tab==="orders"){
-    if(!DATA.orders.length)return h+'<div class="empty">'+mascot(100)+'ยังไม่มีออเดอร์<a class="btn" href="#products">เลือกสินค้า</a></div>';
-    return h+'<div class="list">'+DATA.orders.slice().reverse().map(function(o){return orderCard(o)}).join("")+'</div>';
+    if(!myOrders().length)return h+'<div class="empty">'+mascot(100)+'ยังไม่มีออเดอร์<a class="btn" href="#products">เลือกสินค้า</a></div>';
+    return h+'<div class="list">'+myOrders().slice().reverse().map(function(o){return orderCard(o)}).join("")+'</div>';
   }
-  if(!DATA.topups.length)return h+'<div class="empty">'+mascot(100)+'ยังไม่มีรายการเติมเงิน<a class="btn" href="#topup">เติมเงิน</a></div>';
-  return h+'<div class="list">'+DATA.topups.slice().reverse().map(topupRow).join("")+'</div>';
+  if(!mine(DATA.topups).length)return h+'<div class="empty">'+mascot(100)+'ยังไม่มีรายการเติมเงิน<a class="btn" href="#topup">เติมเงิน</a></div>';
+  return h+'<div class="list">'+mine(DATA.topups).slice().reverse().map(topupRow).join("")+'</div>';
 };
 function topupBadge(s){return s==="ok"?'<span class="pill ok">สำเร็จ</span>':s==="no"?'<span class="pill bad">ไม่ผ่าน</span>':'<span class="pill warn">รอตรวจสลิป</span>'}
 function topupRow(t){return '<div class="card flat" style="gap:4px"><div class="row between"><b class="price">+'+baht(t.amount)+' ฿</b>'+topupBadge(t.status)+'</div><span class="meta">'+esc(t.method)+' · '+fmtDate(t.at)+' · '+esc(t.id)+'</span>'+(t.reason?'<span class="meta">เหตุผล: '+esc(t.reason)+'</span>':'')+'</div>'}
 
 V.otp=function(){
-  var list=DATA.orders.filter(function(o){var p=product(o.pid);return !p||p.otpMode!=="none"});
+  var list=myOrders().filter(function(o){var p=product(o.pid);return !p||p.otpMode!=="none"});
   var u=CFG.shop.otpLine;
   return '<h2 class="h2"><span class="star">★</span>กดรับ OTP</h2>'+
    '<section class="card" style="align-items:center;text-align:center">'+mascot(90)+'<span class="bubble" style="font-size:28px">รับโค้ด 6 หลัก</span><p style="margin:0">กดแอดเพื่อน <b>LINE OFFICIAL</b> ของร้าน เพื่อรับโค้ด OTP 6 หลักสำหรับเข้าใช้งาน</p>'+
-   '<ol class="steps" style="text-align:left;align-self:stretch"><li>กดปุ่ม แอดเพื่อน LINE ด้านล่าง</li><li>ส่งเลขออเดอร์ของคุณในแชต (ดูได้ที่หน้าประวัติการซื้อ)</li><li>รอรับโค้ด 6 หลัก แล้วนำไปกรอกในแอปทันที</li></ol>'+
+   '<ol class="steps" style="text-align:left;align-self:stretch"><li>กดปุ่ม แอดเพื่อน LINE ด้านล่าง</li><li>ส่ง <b>ชื่อยูสเซอร์</b> และเลขออเดอร์ในแชต (ดูได้ที่หน้าประวัติการซื้อ)</li><li>รอรับโค้ด 6 หลัก แล้วนำไปกรอกในแอปทันที</li></ol>'+userNote(null)+
    (u?'<a class="btn block" href="'+esc(u)+'" target="_blank" rel="noopener" style="background:#06c755;box-shadow:0 4px 0 #04a347">แอดเพื่อน LINE OFFICIAL รับโค้ด</a><span class="meta">'+esc(u)+'</span>':'<span class="note warn">ร้านยังไม่ได้ใส่ลิงก์ LINE</span>')+'</section>'+
    (list.length?'<h3 class="h2" style="font-size:17px">ออเดอร์ของคุณ</h3>':'')+
    (list.length?'<div class="list">'+list.slice().reverse().map(function(o){return '<article class="card"><div class="row" style="flex-wrap:nowrap">'+(product(o.pid)?logo(product(o.pid),true):'')+'<div class="col" style="gap:0"><b>'+esc(o.product)+'</b><span class="meta">'+esc(o.id)+' · '+esc(String(o.cred).split("|")[0])+'</span></div></div>'+otpHtml(o)+'</article>'}).join("")+'</div>'
@@ -429,9 +437,9 @@ function ppPayload(id,amount){
 }
 V.topup=function(){
   var pay=CFG.payment,m=UI.topMethod;
-  var mine=DATA.topups.filter(function(t){return t.status==="wait"});
+  var mine=mine0(DATA.topups).filter(function(t){return t.status==="wait"});
   return '<h2 class="h2"><span class="star">★</span>เติมเงิน</h2>'+
-  '<section class="card" style="align-items:center;text-align:center;gap:4px"><span class="sub">ยอดเงินคงเหลือ</span><span class="bubble" style="font-size:40px">'+baht(DATA.user.balance)+' ฿</span></section>'+
+  '<section class="card" style="align-items:center;text-align:center;gap:4px"><span class="sub">ยอดเงินคงเหลือ</span><span class="bubble" style="font-size:40px">'+baht(bal())+' ฿</span></section>'+
   '<section class="card"><h3 class="h2" style="font-size:17px">1. เลือกจำนวนเงิน</h3><div class="amt">'+[50,100,200,300,500,1000].map(function(a){return '<button data-act="amt" data-v="'+a+'" class="'+(Number(UI.topAmt)===a?'on':'')+'">'+a+' ฿</button>'}).join("")+'</div>'+
   '<label class="f">หรือพิมพ์จำนวนเอง (ขั้นต่ำ '+baht(pay.minTopup)+' ฿)<input class="in" id="amt" type="number" inputmode="decimal" min="1" value="'+esc(UI.topAmt)+'"></label></section>'+
   '<section class="card"><h3 class="h2" style="font-size:17px">2. โอนเงิน</h3>'+(pay.banks.length?'<div class="seg"><button data-act="method" data-v="promptpay" class="'+(m==="promptpay"?"on":"")+'">'+esc(pay.mainLabel||"พร้อมเพย์")+'</button><button data-act="method" data-v="bank" class="'+(m==="bank"?"on":"")+'">บัญชีอื่น</button></div>':'<div class="seg"><button class="on" type="button">'+esc(pay.mainLabel||"พร้อมเพย์")+'</button></div>')+
@@ -471,10 +479,10 @@ V.contact=function(){
   '<a class="btn block soft" href="#report">แจ้งปัญหาการใช้งาน</a>';
 };
 V.report=function(){
-  var mine=DATA.tickets;
+  var mine=mine0(DATA.tickets);
   return '<h2 class="h2"><span class="star">★</span>แจ้งปัญหา</h2>'+
   '<form class="card" data-form="report">'+
-  '<label class="f">ออเดอร์ที่มีปัญหา<select class="in" id="r-order"><option value="">ไม่ระบุ / ไม่เกี่ยวกับออเดอร์</option>'+DATA.orders.slice().reverse().map(function(o){return '<option value="'+esc(o.id)+'"'+(UI.reportOrder===o.id?' selected':'')+'>'+esc(o.product+" · "+o.id)+'</option>'}).join("")+'</select></label>'+
+  '<label class="f">ออเดอร์ที่มีปัญหา<select class="in" id="r-order"><option value="">ไม่ระบุ / ไม่เกี่ยวกับออเดอร์</option>'+myOrders().slice().reverse().map(function(o){return '<option value="'+esc(o.id)+'"'+(UI.reportOrder===o.id?' selected':'')+'>'+esc(o.product+" · "+o.id)+'</option>'}).join("")+'</select></label>'+
   '<label class="f">หัวข้อ<select class="in" id="r-topic">'+CFG.reportTopics.map(function(t){return '<option>'+esc(t)+'</option>'}).join("")+'</select></label>'+
   '<label class="f">รายละเอียด<textarea class="in" id="r-detail" placeholder="เล่าปัญหาที่เจอ เช่น ขึ้นข้อความอะไร ใช้อุปกรณ์อะไร" required></textarea></label>'+
   '<label class="btn soft block" for="r-img">แนบรูปหน้าจอ (ถ้ามี)</label><input id="r-img" type="file" accept="image/*" class="hide" data-file="reportImg">'+
@@ -486,7 +494,8 @@ function ticketBadge(s){return s==="done"?'<span class="pill ok">แก้ไข
 V.more=function(){
   var items=[["otp","กดรับ OTP","key","#ffe6ef","#c4507c"],["howto","วิธีเข้าใช้งาน","book","#ece8ff","#6b56c9"],["contact","ติดต่อสอบถาม","chat","#e4f8ef","#2f9e74"],["report","แจ้งปัญหา","flag","#ffeede","#d0702a"],["admin","จัดการร้าน (แอดมิน)","lock","#e6edf6","#2c4a6e"]];
   return '<h2 class="h2"><span class="star">★</span>เมนู</h2>'+
-  '<section class="card"><div class="row between"><div class="col" style="gap:0"><b>'+(DATA.user.name?esc(DATA.user.name):'ยังไม่ได้ตั้งชื่อ')+'</b><span class="meta">'+(DATA.user.contact?esc(DATA.user.contact):'ใส่ชื่อและไลน์เพื่อให้ร้านติดต่อกลับได้')+'</span></div><button class="btn soft sm" data-act="profile">แก้ไข</button></div></section>'+
+  (me()?'<section class="card"><div class="row between"><div class="col" style="gap:0"><span class="meta">ยูสเซอร์</span><b style="font-size:18px">'+esc(me().u)+'</b><span class="meta">'+esc(me().email)+'</span></div><span class="price">'+baht(bal())+' ฿</span></div><button class="btn ghost sm" data-act="signout" style="align-self:flex-start">ออกจากระบบ</button></section>'
+   :'<section class="card" style="align-items:center;text-align:center">'+mascot(80)+'<b>สมัครสมาชิกหรือเข้าสู่ระบบเพื่อซื้อสินค้า</b><div class="two" style="align-self:stretch"><button class="btn soft" data-act="auth" data-v="login">เข้าสู่ระบบ</button><button class="btn pink" data-act="auth" data-v="register">สมัครสมาชิก</button></div></section>')+
   '<div class="menu-list">'+items.map(function(x){return '<a href="#'+x[0]+'"><span class="qi" style="background:'+x[3]+'">'+icon(x[2],x[4])+'</span>'+x[1]+'</a>'}).join("")+'</div>';
 };
 
@@ -496,7 +505,7 @@ V.admin=function(){
   var wT=DATA.topups.filter(function(t){return t.status==="wait"}).length;
   var wO=DATA.orders.filter(function(o){return o.otp&&o.otp.status==="waiting"}).length;
   var wR=DATA.tickets.filter(function(t){return t.status!=="done"}).length;
-  var tabs=[["orders","OTP/ออเดอร์",wO],["topups","สลิปเติมเงิน",wT],["tickets","แจ้งปัญหา",wR],["products","สินค้า",0],["pay","ชำระเงิน",0],["shop","ร้าน",0],["contact","ติดต่อ",0],["data","บันทึก/ไฟล์",0]];
+  var tabs=[["orders","OTP/ออเดอร์",wO],["members","สมาชิก",0],["topups","สลิปเติมเงิน",wT],["tickets","แจ้งปัญหา",wR],["products","สินค้า",0],["pay","ชำระเงิน",0],["shop","ร้าน",0],["contact","ติดต่อ",0],["data","บันทึก/ไฟล์",0]];
   var t=UI.adminTab;
   return '<div class="row between"><h2 class="h2"><span class="star">★</span>จัดการร้าน</h2><button class="btn ghost sm" data-act="logout">ออกจากระบบ</button></div>'+
   '<div class="adm-tabs">'+tabs.map(function(x){return '<button data-act="atab" data-v="'+x[0]+'" class="'+(t===x[0]?'on':'')+'">'+x[1]+(x[2]?'<span class="badge">'+x[2]+'</span>':'')+'</button>'}).join("")+'</div>'+
@@ -509,17 +518,30 @@ A.orders=function(){
   return '<p class="sub">ลูกค้ากดรับ OTP แล้ว ให้ดูรหัสในอีเมลของบัญชีนั้น แล้วกรอกรหัสที่นี่ รหัสจะขึ้นให้ลูกค้าทันที</p><div class="list">'+list.map(function(o){
     var w=o.otp&&o.otp.status==="waiting";
     return '<form class="card'+(w?'':' flat')+'" data-form="setotp" data-id="'+esc(o.id)+'"><div class="row between"><b>'+esc(o.product)+' · '+esc(o.plan)+'</b>'+(w?'<span class="pill warn">ขอ OTP</span>':o.otp&&o.otp.status==="ready"?'<span class="pill ok">ส่งรหัสแล้ว</span>':'')+'</div>'+
-    '<span class="meta">'+esc(o.id)+' · '+fmtDate(o.at)+' · '+esc(o.buyer||"-")+'</span><div class="kvr"><span class="k">บัญชี</span><span class="v">'+esc(o.cred)+'</span></div>'+
+    '<span class="meta">'+esc(o.id)+' · '+fmtDate(o.at)+' · '+'<b>'+esc(who(o))+'</b>'+'</span><div class="kvr"><span class="k">บัญชี</span><span class="v">'+esc(o.cred)+'</span></div>'+
     '<div class="three"><input class="in" name="code" inputmode="numeric" placeholder="กรอกรหัส OTP" value="'+esc(o.otp&&o.otp.code||"")+'"><button class="btn" type="submit">ส่งรหัส</button></div></form>'}).join("")+'</div>';
 };
+A.members=function(){
+  var q=(UI.mq||"").toLowerCase();
+  var list=DATA.accounts.filter(function(a){return !q||(a.u+" "+a.email).toLowerCase().indexOf(q)>=0}).slice().reverse();
+  return '<p class="sub">สมาชิกทั้งหมด '+DATA.accounts.length+' คน แตะชื่อเพื่อดูออเดอร์ ปรับยอดเงิน หรือรีเซ็ตรหัสผ่าน</p><input class="in" id="msearch" type="search" placeholder="ค้นหายูสเซอร์ หรือ Gmail" value="'+esc(UI.mq||"")+'">'+
+  (list.length?'<div class="list">'+list.map(function(a){
+    var os=DATA.orders.filter(function(o){return o.user===a.u}),spent=os.reduce(function(s,o){return s+Number(o.price)},0);
+    return '<details class="acc"><summary><span class="col" style="gap:0;min-width:0"><span>'+esc(a.u)+'</span><span class="meta" style="font-weight:500;overflow-wrap:anywhere">'+esc(a.email)+'</span></span><span class="price" style="margin-left:auto">'+baht(a.balance)+' ฿</span></summary><div class="body stack">'+
+    '<span class="meta">สมัครเมื่อ '+fmtDate(a.at)+' · ซื้อ '+os.length+' ออเดอร์ · รวม '+baht(spent)+' ฿</span>'+
+    (os.length?'<div class="kv">'+os.slice().reverse().map(function(o){return '<div class="kvr"><span class="v" style="font-weight:600">'+esc(o.product)+' · '+esc(o.plan)+'<br><span class="meta">'+esc(o.id)+' · '+fmtDate(o.at)+'</span></span><span class="price" style="font-size:14px">'+baht(o.price)+'</span></div>'}).join("")+'</div>':'')+
+    '<form data-form="madjust" data-u="'+esc(a.u)+'" class="three"><input class="in" name="v" type="number" inputmode="decimal" placeholder="ปรับยอด เช่น 100 / -50"><button class="btn soft" type="submit">ปรับยอด</button></form>'+
+    '<form data-form="mreset" data-u="'+esc(a.u)+'" class="three"><input class="in" name="pw" placeholder="รหัสผ่านใหม่"><button class="btn ghost" type="submit">รีเซ็ตรหัส</button></form></div></details>'}).join("")+'</div>'
+   :'<div class="empty">'+mascot(90)+(DATA.accounts.length?'ไม่พบสมาชิกที่ค้นหา':'ยังไม่มีสมาชิก')+'</div>');
+};
 A.topups=function(){
-  return (DATA.topups.length?'<div class="list">'+DATA.topups.slice().reverse().map(function(t){return '<div class="card'+(t.status==="wait"?'':' flat')+'"><div class="row between"><b class="price">'+baht(t.amount)+' ฿</b>'+topupBadge(t.status)+'</div><span class="meta">'+esc(t.id)+' · '+esc(t.method)+' · '+fmtDate(t.at)+' · '+esc(t.buyer||"-")+'</span>'+(t.slip?'<img class="slip-prev" src="'+t.slip+'" alt="สลิป">':'')+
+  return (DATA.topups.length?'<div class="list">'+DATA.topups.slice().reverse().map(function(t){return '<div class="card'+(t.status==="wait"?'':' flat')+'"><div class="row between"><b class="price">'+baht(t.amount)+' ฿</b>'+topupBadge(t.status)+'</div><span class="meta">'+esc(t.id)+' · '+esc(t.method)+' · '+fmtDate(t.at)+' · '+'<b>'+esc(who(t))+'</b>'+'</span>'+(t.slip?'<img class="slip-prev" src="'+t.slip+'" alt="สลิป">':'')+
     (t.status==="wait"?'<div class="two"><button class="btn" data-act="tu-ok" data-id="'+esc(t.id)+'">อนุมัติ เติมเงิน</button><button class="btn danger" data-act="tu-no" data-id="'+esc(t.id)+'">ไม่อนุมัติ</button></div>':'')+'</div>'}).join("")+'</div>':'<div class="empty">'+mascot(90)+'ยังไม่มีสลิปเติมเงิน</div>')+
-  '<form class="card flat" data-form="adjust"><b>ปรับยอดเงินลูกค้า (เครื่องนี้)</b><span class="meta">ยอดปัจจุบัน '+baht(DATA.user.balance)+' ฿ ใส่ค่าติดลบเพื่อหักเงิน</span><div class="three"><input class="in" name="v" type="number" inputmode="decimal" placeholder="เช่น 100 หรือ -50"><button class="btn soft" type="submit">ปรับยอด</button></div></form>';
+  '';
 };
 A.tickets=function(){
   if(!DATA.tickets.length)return '<div class="empty">'+mascot(90)+'ยังไม่มีเรื่องแจ้งปัญหา</div>';
-  return '<div class="list">'+DATA.tickets.slice().reverse().map(function(t){return '<form class="card'+(t.status==="done"?' flat':'')+'" data-form="ticket" data-id="'+esc(t.id)+'"><div class="row between"><b>'+esc(t.topic)+'</b>'+ticketBadge(t.status)+'</div><span class="meta">'+esc(t.id)+(t.order?' · ออเดอร์ '+esc(t.order):'')+' · '+fmtDate(t.at)+' · '+esc(t.buyer||"-")+'</span><span>'+nl(t.detail)+'</span>'+(t.img?'<img class="slip-prev" src="'+t.img+'" alt="รูปแนบ">':'')+
+  return '<div class="list">'+DATA.tickets.slice().reverse().map(function(t){return '<form class="card'+(t.status==="done"?' flat':'')+'" data-form="ticket" data-id="'+esc(t.id)+'"><div class="row between"><b>'+esc(t.topic)+'</b>'+ticketBadge(t.status)+'</div><span class="meta">'+esc(t.id)+(t.order?' · ออเดอร์ '+esc(t.order):'')+' · '+fmtDate(t.at)+' · '+'<b>'+esc(who(t))+'</b>'+'</span><span>'+nl(t.detail)+'</span>'+(t.img?'<img class="slip-prev" src="'+t.img+'" alt="รูปแนบ">':'')+
     '<label class="f">ตอบกลับลูกค้า<textarea class="in" name="reply">'+esc(t.reply||"")+'</textarea></label><div class="three"><select class="in" name="status"><option value="new"'+(t.status==="new"?' selected':'')+'>รอร้านตอบ</option><option value="doing"'+(t.status==="doing"?' selected':'')+'>กำลังดำเนินการ</option><option value="done"'+(t.status==="done"?' selected':'')+'>แก้ไขแล้ว</option></select><button class="btn" type="submit">บันทึก</button></div></form>'}).join("")+'</div>';
 };
 A.products=function(){
@@ -597,11 +619,17 @@ function closeModal(){$("#modal-root").innerHTML=""}
 var tTimer;function toast(m){var t=$(".toast");if(!t){t=document.createElement("div");t.className="toast";t.setAttribute("role","status");document.body.appendChild(t)}t.textContent=m;t.hidden=false;clearTimeout(tTimer);tTimer=setTimeout(function(){t.hidden=true},2400)}
 var confirmCb=null;
 function ask(title,msg,okText,cb,danger){confirmCb=cb;openModal('<div class="grab"></div><h2 class="h2">'+esc(title)+'</h2><p style="margin:0">'+msg+'</p><div class="two"><button class="btn ghost" data-act="close">ยกเลิก</button><button class="btn '+(danger?'danger':'pink')+'" data-act="confirm-ok">'+esc(okText)+'</button></div>')}
-function profileModal(next){
-  UI.afterProfile=next;
-  openModal('<div class="grab"></div><h2 class="h2">ข้อมูลผู้ซื้อ</h2><p class="sub">ใช้ให้ร้านติดต่อกลับเวลาตรวจสลิปหรือแก้ปัญหา</p><form class="stack" data-form="profile"><label class="f">ชื่อเล่น<input class="in" name="name" value="'+esc(DATA.user.name)+'" required></label><label class="f">LINE ID หรือเบอร์โทร<input class="in" name="contact" value="'+esc(DATA.user.contact)+'" required></label><button class="btn block pink" type="submit">บันทึก</button></form>');
+function loginWall(what){return '<div class="empty">'+mascot(100)+'<b>เข้าสู่ระบบก่อน'+esc(what)+'</b><div class="two" style="width:100%;max-width:340px"><button class="btn soft" data-act="auth" data-v="login">เข้าสู่ระบบ</button><button class="btn pink" data-act="auth" data-v="register">สมัครสมาชิก</button></div></div>'}
+function authModal(mode,next){
+  if(next!==undefined)UI.afterAuth=next;UI.authMode=mode||"login";var reg=UI.authMode==="register";
+  openModal('<div class="grab"></div><h2 class="h2">'+(reg?'สมัครสมาชิก':'เข้าสู่ระบบ')+'</h2><div class="seg"><button data-act="auth" data-v="login" class="'+(reg?'':'on')+'">เข้าสู่ระบบ</button><button data-act="auth" data-v="register" class="'+(reg?'on':'')+'">สมัครสมาชิก</button></div>'+
+  (reg?'<form class="stack" data-form="register" autocomplete="on"><label class="f">ชื่อยูสเซอร์ (ภาษาอังกฤษหรือตัวเลข 3–20 ตัว)<input class="in" name="u" autocomplete="username" autocapitalize="off" required></label><label class="f">Gmail<input class="in" name="email" type="email" autocomplete="email" autocapitalize="off" placeholder="yourname@gmail.com" required></label><label class="f">ตั้งรหัสผ่าน (อย่างน้อย 6 ตัว)<input class="in" name="pw" type="password" autocomplete="new-password" required></label><label class="f">ยืนยันรหัสผ่าน<input class="in" name="pw2" type="password" autocomplete="new-password" required></label><button class="btn block pink" type="submit">สมัครสมาชิก</button></form>'
+  :'<form class="stack" data-form="signin" autocomplete="on"><label class="f">ยูสเซอร์ หรือ Gmail<input class="in" name="u" autocomplete="username" autocapitalize="off" required></label><label class="f">รหัสผ่าน<input class="in" name="pw" type="password" autocomplete="current-password" required></label><button class="btn block pink" type="submit">เข้าสู่ระบบ</button><span class="meta">ลืมรหัสผ่าน ติดต่อร้านทาง LINE เพื่อรีเซ็ต</span></form>'));
 }
-function needProfile(next){if(DATA.user.name&&DATA.user.contact)return false;profileModal(next);return true}
+function needLogin(next){if(me())return false;authModal("login",next);return true}
+function hashPw(u,pw){var str="kumo|"+u.toLowerCase()+"|"+pw,h1=0xdeadbeef,h2=0x41c6ce57;for(var i=0;i<str.length;i++){var c=str.charCodeAt(i);h1=Math.imul(h1^c,2654435761);h2=Math.imul(h2^c,1597334677)}
+  for(var r=0;r<500;r++){h1=Math.imul(h1^(h1>>>16),2246822507)^Math.imul(h2^(h2>>>13),3266489909);h2=Math.imul(h2^(h2>>>16),2246822507)^Math.imul(h1^(h1>>>13),3266489909)}
+  return (h2>>>0).toString(16)+(h1>>>0).toString(16)}
 
 /* ---------- image helper ---------- */
 function readImage(file,max,cb){
@@ -623,14 +651,14 @@ function buy(pid){
   var p=product(pid),pl=p&&p.plans.find(function(x){return x.id===UI.sel});
   if(!pl){toast("เลือกแพ็กเกจก่อนนะ");return}
   if(!pl.stock.length||p.soldOut){toast("สินค้านี้หมดแล้ว");return}
-  if(needProfile(function(){buy(pid)}))return;
-  if(DATA.user.balance<pl.price){
-    openModal('<div class="grab"></div><div class="thanks">'+mascot(96)+'<h2 class="h2">ยอดเงินไม่พอ</h2><p class="sub">ต้องการ '+baht(pl.price)+' ฿ แต่มีอยู่ '+baht(DATA.user.balance)+' ฿</p></div><a class="btn block pink" href="#topup" data-act="topup-need" data-v="'+Math.ceil(pl.price-DATA.user.balance)+'">ไปเติมเงิน</a><button class="btn ghost block" data-act="close">ปิด</button>');return;
+  if(needLogin(function(){buy(pid)}))return;
+  if(bal()<pl.price){
+    openModal('<div class="grab"></div><div class="thanks">'+mascot(96)+'<h2 class="h2">ยอดเงินไม่พอ</h2><p class="sub">ต้องการ '+baht(pl.price)+' ฿ แต่มีอยู่ '+baht(bal())+' ฿</p></div><a class="btn block pink" href="#topup" data-act="topup-need" data-v="'+Math.ceil(pl.price-bal())+'">ไปเติมเงิน</a><button class="btn ghost block" data-act="close">ปิด</button>');return;
   }
   ask("ยืนยันการซื้อ",esc(p.name)+' · '+esc(pl.name)+'<br>ราคา <b>'+baht(pl.price)+' ฿</b> หักจากยอดเงินในร้าน',"ยืนยันซื้อ",function(){
     var cred=pl.stock.shift();
-    DATA.user.balance=Math.round((DATA.user.balance-pl.price)*100)/100;
-    var o={id:"OD"+uid(),pid:p.id,product:p.name,plan:pl.name,price:pl.price,cred:cred,at:Date.now(),otp:{status:"none"},buyer:DATA.user.name+" ("+DATA.user.contact+")"};
+    me().balance=Math.round((me().balance-pl.price)*100)/100;
+    var o={id:"OD"+uid(),user:DATA.session,pid:p.id,product:p.name,plan:pl.name,price:pl.price,cred:cred,at:Date.now(),otp:{status:"none"}};
     DATA.orders.push(o);saveCfg();saveData();render();
     openModal('<div class="grab"></div><div class="thanks"><span class="bubble">thank you!</span><p class="sub">ซื้อสำเร็จ เลขออเดอร์ '+esc(o.id)+'</p></div>'+orderCard(o,false)+'<a class="btn block" href="#history">ดูในประวัติการซื้อ</a>');
   });
@@ -652,13 +680,14 @@ var ACT={
   "topup-need":function(t){UI.topAmt=Math.max(Number(t.dataset.v),Number(CFG.payment.minTopup)||0)},
   "howto-go":function(t){UI.howOpen=t.dataset.pid},
   "report-go":function(t){UI.reportOrder=t.dataset.id},
-  profile:function(){profileModal(null)},
+  auth:function(t,e){if(e)e.preventDefault();authModal(t.dataset.v||"login")},
+  signout:function(){DATA.session=null;saveData();render();toast("ออกจากระบบแล้ว")},
   close:closeModal,
   bg:function(t,e){if(e.target===t)closeModal()},
   "confirm-ok":function(){var cb=confirmCb;confirmCb=null;closeModal();cb&&cb()},
   logout:function(){UI.admin=false;try{sessionStorage.removeItem("kumo_admin")}catch(e){}render()},
   atab:function(t){UI.adminTab=t.dataset.v;render()},
-  "tu-ok":function(t){var x=DATA.topups.find(function(y){return y.id===t.dataset.id});if(!x)return;x.status="ok";DATA.user.balance=Math.round((DATA.user.balance+Number(x.amount))*100)/100;saveData();render();toast("เติม "+baht(x.amount)+" ฿ ให้ลูกค้าแล้ว")},
+  "tu-ok":function(t){var x=DATA.topups.find(function(y){return y.id===t.dataset.id});if(!x)return;var a=acct(x.user);if(!a){toast("ไม่พบบัญชีสมาชิกของสลิปนี้");return}x.status="ok";a.balance=Math.round((a.balance+Number(x.amount))*100)/100;saveData();render();toast("เติม "+baht(x.amount)+" ฿ ให้ลูกค้าแล้ว")},
   "tu-no":function(t){var x=DATA.topups.find(function(y){return y.id===t.dataset.id});if(!x)return;
     openModal('<div class="grab"></div><h2 class="h2">ไม่อนุมัติสลิป</h2><form class="stack" data-form="tu-no" data-id="'+esc(x.id)+'"><label class="f">เหตุผลที่แจ้งลูกค้า<input class="in" name="reason" value="สลิปไม่ถูกต้องหรือยอดไม่ตรง"></label><button class="btn danger block" type="submit">ยืนยันไม่อนุมัติ</button><button class="btn ghost block" type="button" data-act="close">ยกเลิก</button></form>')},
   "p-new":function(){productEditor(null)},
@@ -689,6 +718,7 @@ document.addEventListener("click",function(e){var t=e.target.closest("[data-act]
 document.addEventListener("input",function(e){
   if(e.target.id==="search"){UI.q=e.target.value;$("#pgrid").innerHTML=gridHtml()}
   if(e.target.id==="amt"){UI.topAmt=e.target.value}
+  if(e.target.id==="msearch"){UI.mq=e.target.value;clearTimeout(UI.mt);UI.mt=setTimeout(function(){render();var el=$("#msearch");if(el){el.focus();el.setSelectionRange(el.value.length,el.value.length)}},350)}
 });
 document.addEventListener("change",function(e){
   if(e.target.id==="amt")drawQr();
@@ -700,24 +730,38 @@ document.addEventListener("change",function(e){
 });
 var FORMS={
   login:function(f){if($("#pin").value===String(CFG.shop.adminPin)){UI.admin=true;try{sessionStorage.setItem("kumo_admin","1")}catch(e){}render()}else toast("รหัส PIN ไม่ถูกต้อง")},
-  profile:function(f){DATA.user.name=f.name.value.trim();DATA.user.contact=f.contact.value.trim();saveData();closeModal();render();var n=UI.afterProfile;UI.afterProfile=null;n&&n()},
+  register:function(f){
+    var u=f.u.value.trim(),em=f.email.value.trim().toLowerCase(),pw=f.pw.value;
+    if(!/^[A-Za-z0-9_.]{3,20}$/.test(u)){toast("ยูสเซอร์ใช้ได้เฉพาะภาษาอังกฤษ ตัวเลข _ . 3–20 ตัว");return}
+    if(!/^[^\s@]+@gmail\.com$/.test(em)){toast("กรอก Gmail ให้ถูกต้อง เช่น name@gmail.com");return}
+    if(pw.length<6){toast("รหัสผ่านต้องมีอย่างน้อย 6 ตัว");return}
+    if(pw!==f.pw2.value){toast("รหัสผ่านทั้งสองช่องไม่ตรงกัน");return}
+    if(DATA.accounts.some(function(a){return a.u.toLowerCase()===u.toLowerCase()})){toast("ยูสเซอร์นี้มีคนใช้แล้ว ลองชื่ออื่น");return}
+    if(DATA.accounts.some(function(a){return a.email===em})){toast("Gmail นี้สมัครไว้แล้ว ให้เข้าสู่ระบบแทน");return}
+    DATA.accounts.push({u:u,email:em,pw:hashPw(u,pw),balance:0,at:Date.now()});DATA.session=u;saveData();closeModal();render();toast("สมัครสมาชิกสำเร็จ ยินดีต้อนรับ "+u);
+    var n=UI.afterAuth;UI.afterAuth=null;n&&n()},
+  signin:function(f){
+    var id=f.u.value.trim().toLowerCase(),a=DATA.accounts.find(function(x){return x.u.toLowerCase()===id||x.email===id});
+    if(!a||a.pw!==hashPw(a.u,f.pw.value)){toast("ยูสเซอร์หรือรหัสผ่านไม่ถูกต้อง");return}
+    DATA.session=a.u;saveData();closeModal();render();toast("เข้าสู่ระบบแล้ว");var n=UI.afterAuth;UI.afterAuth=null;n&&n()},
+  madjust:function(f){var a=acct(f.dataset.u),v=Number(f.v.value);if(!a||!v){toast("ใส่จำนวนเงินก่อน");return}a.balance=Math.round((a.balance+v)*100)/100;saveData();render();toast("ปรับยอดของ "+a.u+" แล้ว")},
+  mreset:function(f){var a=acct(f.dataset.u),pw=f.pw.value;if(!a||pw.length<6){toast("รหัสใหม่ต้องมีอย่างน้อย 6 ตัว");return}a.pw=hashPw(a.u,pw);saveData();render();toast("ตั้งรหัสผ่านใหม่ให้ "+a.u+" แล้ว")},
   topup:function(){
     var a=Number(UI.topAmt);if(!(a>0)){toast("ใส่จำนวนเงินก่อนนะ");return}
     if(a<Number(CFG.payment.minTopup)){toast("เติมขั้นต่ำ "+baht(CFG.payment.minTopup)+" ฿");return}
     if(!UI.slip){toast("แนบรูปสลิปก่อนส่ง");return}
-    if(needProfile(function(){FORMS.topup()}))return;
-    var t={id:"TP"+uid(),amount:a,method:UI.topMethod==="bank"?"โอนธนาคาร":"พร้อมเพย์",slip:UI.slip,at:Date.now(),status:"wait",buyer:DATA.user.name+" ("+DATA.user.contact+")"};
+    if(needLogin(function(){FORMS.topup()}))return;
+    var t={id:"TP"+uid(),amount:a,method:UI.topMethod==="bank"&&CFG.payment.banks.length?"บัญชีอื่น":(CFG.payment.mainLabel||"พร้อมเพย์"),slip:UI.slip,at:Date.now(),status:"wait",user:DATA.session};
     DATA.topups.push(t);UI.slip="";if(saveData()){render();openModal('<div class="grab"></div><div class="thanks">'+mascot(96)+'<span class="bubble" style="font-size:28px">ส่งสลิปแล้ว</span><p class="sub">แอดมินจะตรวจและเติมยอด '+baht(a)+' ฿ ให้เร็ว ๆ นี้</p></div><button class="btn block" data-act="close">ตกลง</button>')}
   },
   report:function(){
     var d=$("#r-detail").value.trim();if(!d){toast("ใส่รายละเอียดก่อนนะ");return}
-    if(needProfile(function(){}))return;
-    DATA.tickets.push({id:"RP"+uid(),order:$("#r-order").value,topic:$("#r-topic").value,detail:d,img:UI.reportImg,at:Date.now(),status:"new",buyer:DATA.user.name+" ("+DATA.user.contact+")"});
+    if(needLogin(function(){}))return;
+    DATA.tickets.push({id:"RP"+uid(),order:$("#r-order").value,topic:$("#r-topic").value,detail:d,img:UI.reportImg,at:Date.now(),status:"new",user:DATA.session});
     UI.reportImg="";UI.reportOrder=null;saveData();render();toast("ส่งเรื่องให้ร้านแล้ว");
   },
   setotp:function(f){var o=DATA.orders.find(function(x){return x.id===f.dataset.id});var c=f.code.value.trim();if(!c){toast("กรอกรหัสก่อนส่ง");return}o.otp={status:"ready",code:c,at:Date.now()};saveData();render();toast("ส่งรหัสให้ลูกค้าแล้ว")},
   "tu-no":function(f){var x=DATA.topups.find(function(y){return y.id===f.dataset.id});x.status="no";x.reason=f.reason.value;saveData();closeModal();render();toast("แจ้งไม่อนุมัติแล้ว")},
-  adjust:function(f){var v=Number(f.v.value);if(!v){toast("ใส่จำนวนเงินก่อน");return}DATA.user.balance=Math.round((DATA.user.balance+v)*100)/100;saveData();render();toast("ปรับยอดแล้ว")},
   ticket:function(f){var t=DATA.tickets.find(function(x){return x.id===f.dataset.id});t.reply=f.reply.value;t.status=f.status.value;saveData();render();toast("บันทึกแล้ว")},
   shop:function(f){var s=CFG.shop;["name","tagline","announce","footer","adminPin","otpLine"].forEach(function(k){s[k]=f[k].value});s.otpTtl=Number(f.otpTtl.value)||10;
     if(!s.adminPin.trim()){s.adminPin="1234"}CFG.generalHowto=f.generalHowto.value;CFG.reportTopics=f.reportTopics.value.split("\n").map(function(x){return x.trim()}).filter(Boolean);saveCfg();render();toast("บันทึกข้อมูลร้านแล้ว")},
