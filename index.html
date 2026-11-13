@@ -206,6 +206,7 @@ details.acc .body{padding:0 14px 14px}
 
 <script type="application/json" id="shop-config">null</script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.118.0/dist/umd/supabase.js"></script>
 <script>
 (function(){
 "use strict";
@@ -258,31 +259,61 @@ var DEFAULTS = {
 };
 
 /* ---------- state ---------- */
-var embedded=null; try{embedded=JSON.parse($("#shop-config").textContent)}catch(e){}
-var CFG = lsGet("kumo_cfg") || embedded || clone(DEFAULTS);
-if(!lsGet("kumo_cfg")&&!embedded)CFG.v=3;
-// fill missing keys after updates
-(function fill(t,s){Object.keys(s).forEach(function(k){if(t[k]===undefined)t[k]=clone(s[k]);else if(s[k]&&typeof s[k]==="object"&&!Array.isArray(s[k]))fill(t[k],s[k])})})(CFG,DEFAULTS);
-if(!(CFG.v>=2)){CFG.products.forEach(function(p){p.otpMode="link"});if(!CFG.shop.otpLine)CFG.shop.otpLine="https://lin.ee/yeNKQBW";CFG.v=2}
-if(!(CFG.v>=3)){var PY=CFG.payment;PY.mainLabel="กสิกรไทย";PY.promptpay="240-1-81128-4";PY.promptpayName="APHINYA PH.";PY.autoQr=false;PY.qrImage=SHOP_QR;PY.banks=[];PY.note=DEFAULTS.payment.note;CFG.v=3;
-  try{if(localStorage.getItem("kumo_cfg"))localStorage.setItem("kumo_cfg",JSON.stringify(CFG))}catch(e){}}
-var DATA = lsGet("kumo_data") || {accounts:[],session:null,orders:[],topups:[],tickets:[]};
-if(!DATA.accounts){DATA.accounts=[];DATA.session=null;delete DATA.user;DATA.orders=(DATA.orders||[]).filter(function(o){return !o.sample})}
-function me(){return DATA.accounts.find(function(a){return a.u===DATA.session})||null}
-function bal(){var m=me();return m?m.balance:0}
-function acct(u){return DATA.accounts.find(function(a){return a.u===u})}
+var SB_URL="https://xmxcmmaorxtolwpbukov.supabase.co", SB_KEY="sb_publishable_a68CXSrCaXGKCQ14QQrcXQ_EodK-M9w";
+var sb=null; try{sb=window.supabase.createClient(SB_URL,SB_KEY)}catch(e){}
+function stripStock(c){c.products.forEach(function(p){p.plans.forEach(function(x){delete x.stock})});return c}
+function fillDefaults(){(function fill(t,s){Object.keys(s).forEach(function(k){if(t[k]===undefined)t[k]=clone(s[k]);else if(s[k]&&typeof s[k]==="object"&&!Array.isArray(s[k]))fill(t[k],s[k])})})(CFG,DEFAULTS)}
+var CFG=stripStock(clone(DEFAULTS));CFG.v=3;
+var ST={ready:false,err:"",hasSettings:false,profile:null,counts:{},orders:[],topups:[],tickets:[],members:[],stock:{}};
+var DATA=ST;
+function me(){return ST.profile}
+function bal(){return me()?Number(me().balance)||0:0}
+function acct(u){return ST.members.find(function(a){return a.u===u})}
+function mine(list){var m=me();return m?list.filter(function(x){return x.user_id===m.id}):[]}
 function mine0(l){return mine(l)}
-function mine(list){return list.filter(function(x){return DATA.session&&x.user===DATA.session})}
-function myOrders(){return mine(DATA.orders)}
-function who(x){var a=acct(x.user);return x.user?(x.user+(a?" · "+a.email:"")):(x.buyer||"-")}
-function saveCfg(){lsSet("kumo_cfg",CFG)}
-function saveData(){return lsSet("kumo_data",DATA)}
-var UI={cat:"ทั้งหมด",q:"",histTab:"orders",topMethod:"promptpay",topAmt:100,slip:"",reportImg:"",adminTab:"orders",admin:false,editing:null,lastBuy:null};
-try{UI.admin=sessionStorage.getItem("kumo_admin")==="1"}catch(e){}
+function myOrders(){return mine(ST.orders)}
+function who(x){var a=ST.members.find(function(m){return m.id===x.user_id});return (x.user||"-")+(a?" · "+a.email:"")}
+function stockN(x){return ST.counts[x.id]||0}
+function ms(t){return t?Date.parse(t):Date.now()}
+function normM(r){return {id:r.id,u:r.username,email:r.email,balance:Number(r.balance)||0,is_admin:!!r.is_admin,at:ms(r.created_at)}}
+function normO(r){return {id:r.id,user_id:r.user_id,user:r.username,pid:r.product_id,product:r.product,plan:r.plan,price:Number(r.price),cred:r.cred,otp:r.otp||{status:"none"},at:ms(r.created_at)}}
+function normT(r){return {id:r.id,user_id:r.user_id,user:r.username,amount:Number(r.amount),method:r.method,slip:r.slip,status:r.status,reason:r.reason,at:ms(r.created_at)}}
+function normK(r){return {id:r.id,user_id:r.user_id,user:r.username,order:r.order_id,topic:r.topic,detail:r.detail,img:r.img,status:r.status,reply:r.reply,at:ms(r.created_at)}}
+function errMsg(e){var m=(e&&(e.message||e.error_description))||String(e);
+  var map={low_balance:"ยอดเงินไม่พอ",out_of_stock:"สินค้าหมดแล้ว",sold_out:"สินค้าหมดแล้ว",no_plan:"ไม่พบแพ็กเกจนี้",no_product:"ไม่พบสินค้านี้",not_logged_in:"เข้าสู่ระบบก่อนนะ",not_admin:"บัญชีนี้ไม่ใช่แอดมิน",not_waiting:"สลิปนี้ถูกตรวจไปแล้ว","Invalid login credentials":"ยูสเซอร์หรือรหัสผ่านไม่ถูกต้อง","Email not confirmed":"ยังไม่ได้ยืนยันอีเมล กดลิงก์ยืนยันใน Gmail ก่อน","User already registered":"Gmail นี้สมัครไว้แล้ว ให้เข้าสู่ระบบแทน","Database error saving new user":"ยูสเซอร์นี้มีคนใช้แล้ว ลองชื่ออื่น","Failed to fetch":"เชื่อมต่อร้านไม่ได้ ลองเช็กอินเทอร์เน็ตแล้วกดใหม่","rate limit":"ลองใหม่อีกครั้งในอีกสักครู่"};
+  for(var k in map)if(m.indexOf(k)>=0)return map[k];return m}
+function saveCfg(){if(!sb)return Promise.resolve();var d=stripStock(clone(CFG));return sb.from("settings").upsert({id:1,data:d}).then(function(r){if(r.error)toast("บันทึกไม่สำเร็จ: "+errMsg(r.error));else ST.hasSettings=true})}
+async function loadPublic(){
+  var r=await sb.from("settings").select("data").eq("id",1).maybeSingle();if(r.error)throw r.error;
+  if(r.data&&r.data.data){CFG=r.data.data;fillDefaults();ST.hasSettings=true}
+  var c=await sb.rpc("stock_counts");if(c.error)throw c.error;ST.counts={};(c.data||[]).forEach(function(x){ST.counts[x.plan_id]=Number(x.n)});
+}
+async function loadUser(){
+  var s=(await sb.auth.getSession()).data.session;
+  ST.profile=null;ST.orders=[];ST.topups=[];ST.tickets=[];ST.members=[];ST.stock={};
+  if(!s)return;
+  var p=await sb.from("profiles").select("*").eq("id",s.user.id).maybeSingle();if(p.error)throw p.error;
+  if(!p.data)return;ST.profile=normM(p.data);
+  var q=[sb.from("orders").select("*").order("created_at"),sb.from("topups").select("*").order("created_at"),sb.from("tickets").select("*").order("created_at")];
+  if(ST.profile.is_admin)q.push(sb.from("profiles").select("*").order("created_at"),sb.from("stock").select("plan_id,cred").eq("sold",false).order("id"));
+  var r=await Promise.all(q);r.forEach(function(x){if(x.error)throw x.error});
+  ST.orders=r[0].data.map(normO);ST.topups=r[1].data.map(normT);ST.tickets=r[2].data.map(normK);
+  if(ST.profile.is_admin){ST.members=r[3].data.map(normM);r[4].data.forEach(function(x){(ST.stock[x.plan_id]=ST.stock[x.plan_id]||[]).push(x.cred)})}
+}
+var loading=null;
+function reload(){
+  if(!sb){ST.ready=true;ST.err="โหลดระบบร้านไม่สำเร็จ ลองรีเฟรชหน้า";render();return Promise.resolve()}
+  if(loading)return loading;
+  loading=Promise.all([loadPublic(),loadUser()]).then(function(){ST.err="";
+    if(me()&&me().is_admin&&!ST.hasSettings)saveCfg();
+  },function(e){ST.err=errMsg(e)}).then(function(){ST.ready=true;loading=null;if(!$("#modal-root").innerHTML||!UI.keepModal)render()});
+  return loading;
+}
+var UI={cat:"ทั้งหมด",q:"",histTab:"orders",topMethod:"promptpay",topAmt:100,slip:"",reportImg:"",adminTab:"orders",editing:null,lastBuy:null};
 
 function product(id){return CFG.products.find(function(p){return p.id===id})}
 function stockOf(p){return p.soldOut?0:realStock(p)}
-function realStock(p){return p.plans.reduce(function(s,x){return s+x.stock.length},0)}
+function realStock(p){return p.plans.reduce(function(s,x){return s+stockN(x)},0)}
 function minPrice(p){return Math.min.apply(null,p.plans.map(function(x){return Number(x.price)||0}))}
 
 /* ---------- original SVG art (no copyrighted characters) ---------- */
@@ -364,13 +395,13 @@ function gridHtml(){
 }
 V.product=function(r){
   var p=product(r.id);if(!p)return '<div class="empty">'+mascot(90)+'ไม่พบสินค้านี้<a class="btn" href="#products">กลับไปหน้าสินค้า</a></div>';
-  if(!UI.sel||!p.plans.some(function(x){return x.id===UI.sel})){var f=p.plans.find(function(x){return x.stock.length});UI.sel=(f||p.plans[0]||{}).id}
+  if(!UI.sel||!p.plans.some(function(x){return x.id===UI.sel})){var f=p.plans.find(function(x){return stockN(x)});UI.sel=(f||p.plans[0]||{}).id}
   var otpTxt={request:"กดรับ OTP เองได้ที่หน้าประวัติการซื้อ",link:"รับโค้ด OTP 6 หลักผ่าน LINE OFFICIAL",none:"ไม่ต้องใช้ OTP"}[p.otpMode];
   return '<a href="#products" class="btn ghost sm" style="align-self:flex-start">‹ สินค้าทั้งหมด</a>'+
   '<section class="card"><div class="row" style="flex-wrap:nowrap">'+logo(p,true)+'<div class="col" style="gap:2px"><h1 class="h2" style="font-size:22px">'+esc(p.name)+'</h1><span class="sub">'+esc(p.cat)+'</span></div></div>'+
   '<p style="margin:0">'+nl(p.desc)+'</p><div class="row"><span class="pill pink">🔑 '+otpTxt+'</span><span class="pill">⚡ ได้รหัสทันทีหลังซื้อ</span></div></section>'+
   '<section class="card"><h2 class="h2">เลือกแพ็กเกจ</h2><div class="plans">'+
-   p.plans.map(function(x){var out=!x.stock.length||p.soldOut;return '<label class="plan'+(UI.sel===x.id?' on':'')+(out?' out':'')+'"><input type="radio" name="plan" data-act="plan" value="'+esc(x.id)+'"'+(UI.sel===x.id?' checked':'')+(out?' disabled':'')+'><span class="grow"><b>'+esc(x.name)+'</b><br><span class="meta">'+(out?'สินค้าหมด':'เหลือ '+x.stock.length+' ชิ้น')+'</span></span><span class="price">'+baht(x.price)+' ฿</span></label>'}).join("")+
+   p.plans.map(function(x){var out=!stockN(x)||p.soldOut;return '<label class="plan'+(UI.sel===x.id?' on':'')+(out?' out':'')+'"><input type="radio" name="plan" data-act="plan" value="'+esc(x.id)+'"'+(UI.sel===x.id?' checked':'')+(out?' disabled':'')+'><span class="grow"><b>'+esc(x.name)+'</b><br><span class="meta">'+(out?'สินค้าหมด':'เหลือ '+stockN(x)+' ชิ้น')+'</span></span><span class="price">'+baht(x.price)+' ฿</span></label>'}).join("")+
   '</div><div class="note">'+(me()?'ยอดเงินของคุณ <b>'+baht(bal())+' ฿</b>':'เข้าสู่ระบบหรือสมัครสมาชิกก่อนซื้อ')+'</div>'+
   '<button class="btn block pink" data-act="buy" data-pid="'+esc(p.id)+'"'+(p.soldOut?' disabled':'')+'>'+(p.soldOut?'สินค้าหมด':'ซื้อเลย')+'</button></section>'+
   '<details class="acc"><summary>'+icon("book","#6b56c9").replace("<svg",'<svg width="22" height="22"')+'วิธีเข้าใช้งาน '+esc(p.name)+'</summary><div class="body"><ol class="steps">'+steps(p.howto)+'</ol></div></details>';
@@ -394,7 +425,7 @@ function otpHtml(o){
   if(s.status==="waiting")return '<div class="otp-box"><div class="row between"><b>รหัส OTP</b><span class="pill warn">กำลังรอรหัส</span></div><span class="meta">ขอเมื่อ '+fmtDate(s.req)+' · กดรหัสในแอปแล้วรอสักครู่ รหัสจะขึ้นตรงนี้ กดรีเฟรชเพื่อดู</span><div class="row"><button class="btn soft sm" data-act="refresh">รีเฟรช</button><button class="btn ghost sm" data-act="otp-cancel" data-id="'+esc(o.id)+'">ยกเลิกคำขอ</button></div></div>';
   return '<div class="otp-box"><b>รหัส OTP</b><span class="meta">'+(s.status==="ready"?"รหัสเดิมหมดอายุแล้ว ":"")+'เมื่อแอปขอรหัสยืนยัน กดปุ่มนี้เพื่อรับรหัส</span><button class="btn block" data-act="otp" data-id="'+esc(o.id)+'">กดรับ OTP</button></div>';
 }
-function userNote(o){var u=(o&&o.user)||DATA.session||"";var msg="ขอ OTP\nยูสเซอร์: "+u+(o?"\nออเดอร์: "+o.id:"");
+function userNote(o){var u=(o&&o.user)||(me()&&me().u)||"";var msg="ขอ OTP\nยูสเซอร์: "+u+(o?"\nออเดอร์: "+o.id:"");
   return '<div class="note warn" style="display:flex;flex-direction:column;gap:6px"><b>⚠️ สำคัญ: ทุกครั้งที่ขอ OTP ต้องแนบชื่อยูสเซอร์ของคุณไปด้วย</b>'+(u?'<span>ยูสเซอร์ของคุณ: <b>'+esc(u)+'</b>'+(o?' · ออเดอร์ <b>'+esc(o.id)+'</b>':'')+'</span><button class="btn soft sm" data-act="copy" data-v="'+esc(msg)+'" style="align-self:flex-start">คัดลอกข้อความส่งร้าน</button>':'<span>เข้าสู่ระบบก่อนเพื่อดูชื่อยูสเซอร์ของคุณ</span>')+'</div>'}
 function orderCard(o,withOtp){
   return '<article class="card"><div class="row between" style="flex-wrap:nowrap;align-items:flex-start"><div class="col" style="gap:2px"><b>'+esc(o.product)+'</b><span class="meta">'+esc(o.plan)+' · '+fmtDate(o.at)+'</span><span class="meta">เลขออเดอร์ '+esc(o.id)+(o.sample?' (ตัวอย่าง)':'')+'</span></div><span class="price">'+baht(o.price)+' ฿</span></div>'+
@@ -501,11 +532,12 @@ V.more=function(){
 
 /* ---------- admin ---------- */
 V.admin=function(){
-  if(!UI.admin)return '<h2 class="h2"><span class="star">★</span>เข้าสู่ระบบแอดมิน</h2><form class="card" data-form="login"><label class="f">รหัส PIN แอดมิน<input class="in" id="pin" type="password" inputmode="numeric" autocomplete="off" placeholder="••••"></label><button class="btn block" type="submit">เข้าสู่ระบบ</button><span class="meta">รหัสเริ่มต้นคือ 1234 เปลี่ยนได้ที่แท็บ ร้าน</span></form>';
+  if(!me())return loginWall("จัดการร้าน");
+  if(!me().is_admin)return '<div class="empty">'+mascot(100)+'<b>บัญชีนี้ไม่ใช่แอดมิน</b><span>เจ้าของร้านตั้งสิทธิ์แอดมินได้ใน Supabase</span></div>';
   var wT=DATA.topups.filter(function(t){return t.status==="wait"}).length;
   var wO=DATA.orders.filter(function(o){return o.otp&&o.otp.status==="waiting"}).length;
   var wR=DATA.tickets.filter(function(t){return t.status!=="done"}).length;
-  var tabs=[["orders","OTP/ออเดอร์",wO],["members","สมาชิก",0],["topups","สลิปเติมเงิน",wT],["tickets","แจ้งปัญหา",wR],["products","สินค้า",0],["pay","ชำระเงิน",0],["shop","ร้าน",0],["contact","ติดต่อ",0],["data","บันทึก/ไฟล์",0]];
+  var tabs=[["orders","OTP/ออเดอร์",wO],["members","สมาชิก",0],["topups","สลิปเติมเงิน",wT],["tickets","แจ้งปัญหา",wR],["products","สินค้า",0],["pay","ชำระเงิน",0],["shop","ร้าน",0],["contact","ติดต่อ",0],["data","สำรองข้อมูล",0]];
   var t=UI.adminTab;
   return '<div class="row between"><h2 class="h2"><span class="star">★</span>จัดการร้าน</h2><button class="btn ghost sm" data-act="logout">ออกจากระบบ</button></div>'+
   '<div class="adm-tabs">'+tabs.map(function(x){return '<button data-act="atab" data-v="'+x[0]+'" class="'+(t===x[0]?'on':'')+'">'+x[1]+(x[2]?'<span class="badge">'+x[2]+'</span>':'')+'</button>'}).join("")+'</div>'+
@@ -523,16 +555,15 @@ A.orders=function(){
 };
 A.members=function(){
   var q=(UI.mq||"").toLowerCase();
-  var list=DATA.accounts.filter(function(a){return !q||(a.u+" "+a.email).toLowerCase().indexOf(q)>=0}).slice().reverse();
-  return '<p class="sub">สมาชิกทั้งหมด '+DATA.accounts.length+' คน แตะชื่อเพื่อดูออเดอร์ ปรับยอดเงิน หรือรีเซ็ตรหัสผ่าน</p><input class="in" id="msearch" type="search" placeholder="ค้นหายูสเซอร์ หรือ Gmail" value="'+esc(UI.mq||"")+'">'+
+  var list=ST.members.filter(function(a){return !q||(a.u+" "+a.email).toLowerCase().indexOf(q)>=0}).slice().reverse();
+  return '<p class="sub">สมาชิกทั้งหมด '+ST.members.length+' คน แตะชื่อเพื่อดูออเดอร์และปรับยอดเงิน</p><input class="in" id="msearch" type="search" placeholder="ค้นหายูสเซอร์ หรือ Gmail" value="'+esc(UI.mq||"")+'">'+
   (list.length?'<div class="list">'+list.map(function(a){
     var os=DATA.orders.filter(function(o){return o.user===a.u}),spent=os.reduce(function(s,o){return s+Number(o.price)},0);
     return '<details class="acc"><summary><span class="col" style="gap:0;min-width:0"><span>'+esc(a.u)+'</span><span class="meta" style="font-weight:500;overflow-wrap:anywhere">'+esc(a.email)+'</span></span><span class="price" style="margin-left:auto">'+baht(a.balance)+' ฿</span></summary><div class="body stack">'+
     '<span class="meta">สมัครเมื่อ '+fmtDate(a.at)+' · ซื้อ '+os.length+' ออเดอร์ · รวม '+baht(spent)+' ฿</span>'+
     (os.length?'<div class="kv">'+os.slice().reverse().map(function(o){return '<div class="kvr"><span class="v" style="font-weight:600">'+esc(o.product)+' · '+esc(o.plan)+'<br><span class="meta">'+esc(o.id)+' · '+fmtDate(o.at)+'</span></span><span class="price" style="font-size:14px">'+baht(o.price)+'</span></div>'}).join("")+'</div>':'')+
-    '<form data-form="madjust" data-u="'+esc(a.u)+'" class="three"><input class="in" name="v" type="number" inputmode="decimal" placeholder="ปรับยอด เช่น 100 / -50"><button class="btn soft" type="submit">ปรับยอด</button></form>'+
-    '<form data-form="mreset" data-u="'+esc(a.u)+'" class="three"><input class="in" name="pw" placeholder="รหัสผ่านใหม่"><button class="btn ghost" type="submit">รีเซ็ตรหัส</button></form></div></details>'}).join("")+'</div>'
-   :'<div class="empty">'+mascot(90)+(DATA.accounts.length?'ไม่พบสมาชิกที่ค้นหา':'ยังไม่มีสมาชิก')+'</div>');
+    '<form data-form="madjust" data-u="'+esc(a.u)+'" class="three"><input class="in" name="v" type="number" inputmode="decimal" placeholder="ปรับยอด เช่น 100 / -50"><button class="btn soft" type="submit">ปรับยอด</button></form>'+'<span class="meta">ลูกค้าลืมรหัสผ่าน ให้กด ลืมรหัสผ่าน ที่หน้าเข้าสู่ระบบ ระบบจะส่งลิงก์ตั้งรหัสใหม่ไปที่ Gmail</div></details>'}).join("")+'</div>'
+   :'<div class="empty">'+mascot(90)+(ST.members.length?'ไม่พบสมาชิกที่ค้นหา':'ยังไม่มีสมาชิก')+'</div>');
 };
 A.topups=function(){
   return (DATA.topups.length?'<div class="list">'+DATA.topups.slice().reverse().map(function(t){return '<div class="card'+(t.status==="wait"?'':' flat')+'"><div class="row between"><b class="price">'+baht(t.amount)+' ฿</b>'+topupBadge(t.status)+'</div><span class="meta">'+esc(t.id)+' · '+esc(t.method)+' · '+fmtDate(t.at)+' · '+'<b>'+esc(who(t))+'</b>'+'</span>'+(t.slip?'<img class="slip-prev" src="'+t.slip+'" alt="สลิป">':'')+
@@ -574,7 +605,6 @@ A.shop=function(){
   '<label class="f">หัวข้อแจ้งปัญหา (1 บรรทัด = 1 หัวข้อ)<textarea class="in" name="reportTopics">'+esc(CFG.reportTopics.join("\n"))+'</textarea></label>'+
   '<label class="f">ลิงก์ LINE OFFICIAL สำหรับรับโค้ด OTP<input class="in" name="otpLine" value="'+esc(s.otpLine)+'" placeholder="https://lin.ee/..."></label>'+
   '<label class="f">รหัส OTP ใช้ได้กี่นาที (แบบแอดมินกรอกรหัสให้)<input class="in" name="otpTtl" type="number" value="'+esc(s.otpTtl)+'"></label>'+
-  '<label class="f">รหัส PIN แอดมิน<input class="in" name="adminPin" value="'+esc(s.adminPin)+'" inputmode="numeric"></label>'+
   '<button class="btn block pink" type="submit">บันทึกข้อมูลร้าน</button></form>';
 };
 A.contact=function(){
@@ -583,12 +613,8 @@ A.contact=function(){
   '<label class="f">ข้อความทักทาย<textarea class="in" name="note">'+esc(c.note)+'</textarea></label><button class="btn block pink" type="submit">บันทึกช่องทางติดต่อ</button></form>';
 };
 A.data=function(){
-  return '<section class="card"><h3 class="h2" style="font-size:17px">บันทึกเป็นไฟล์เว็บ</h3><p class="sub">ดาวน์โหลดไฟล์ index.html ที่มีชื่อร้าน สินค้า ราคา ช่องทางชำระเงินและข้อความที่แก้ไว้ เอาไปอัปโหลดขึ้นโฮสต์ได้เลย</p>'+
-  '<label class="switch"><input type="checkbox" id="with-stock"> รวมรายการสต็อกบัญชีในไฟล์ด้วย</label><div class="note warn">ถ้ารวมสต็อก ใครเปิดดูโค้ดเว็บก็เห็นอีเมลและรหัสผ่านได้ ไม่ควรติ๊กถ้าจะเปิดเว็บให้ลูกค้าใช้</div>'+
-  '<button class="btn block" data-act="dl-site">ดาวน์โหลดไฟล์เว็บ</button></section>'+
-  '<section class="card"><h3 class="h2" style="font-size:17px">สำรองและย้ายข้อมูล</h3><p class="sub">คัดลอกข้อความนี้เก็บไว้ หรือวางข้อความสำรองแล้วกด นำเข้า</p><textarea class="in" id="json" style="min-height:140px;font-size:13px;font-family:ui-monospace,monospace">'+esc(JSON.stringify({cfg:CFG,data:DATA}))+'</textarea>'+
-  '<div class="two"><button class="btn soft" data-act="json-copy">คัดลอก</button><button class="btn" data-act="json-import">นำเข้า</button></div></section>'+
-  '<section class="card flat"><h3 class="h2" style="font-size:17px">รีเซ็ต</h3><button class="btn danger" data-act="reset">ล้างข้อมูลทั้งหมดกลับเป็นค่าเริ่มต้น</button></section>';
+  return '<section class="card"><h3 class="h2" style="font-size:17px">สำรองข้อมูลร้าน</h3><p class="sub">ชื่อร้าน สินค้า ราคา ข้อความ และช่องทางชำระเงิน (ไม่รวมสต็อกบัญชี) คัดลอกเก็บไว้ หรือวางข้อความสำรองแล้วกด นำเข้า</p><textarea class="in" id="json" style="min-height:140px;font-size:13px;font-family:ui-monospace,monospace">'+esc(JSON.stringify(stripStock(clone(CFG))))+'</textarea>'+
+  '<div class="two"><button class="btn soft" data-act="json-copy">คัดลอก</button><button class="btn" data-act="json-import">นำเข้า</button></div></section>';
 };
 
 /* product editor modal */
@@ -611,7 +637,7 @@ function productEditor(p){
   '<button class="btn ghost block" type="button" data-act="close">ยกเลิก</button></form>';
   openModal(h);
 }
-function planEd(x){return '<div class="plan-ed" data-plan="'+esc(x.id||"")+'"><div class="three"><input class="in" data-k="name" placeholder="ชื่อแพ็กเกจ" value="'+esc(x.name)+'"><input class="in" data-k="price" type="number" inputmode="decimal" placeholder="ราคา" value="'+esc(x.price)+'"></div><textarea class="in" data-k="stock" placeholder="ใส่บัญชีที่จะขาย บรรทัดละ 1 บัญชี" style="font-size:14px">'+esc((x.stock||[]).join("\n"))+'</textarea><div class="row between"><span class="meta">สต็อก '+((x.stock||[]).length)+' บัญชี</span><button class="btn danger sm" type="button" data-act="row-del">ลบแพ็กเกจ</button></div></div>'}
+function planEd(x){return '<div class="plan-ed" data-plan="'+esc(x.id||"")+'"><div class="three"><input class="in" data-k="name" placeholder="ชื่อแพ็กเกจ" value="'+esc(x.name)+'"><input class="in" data-k="price" type="number" inputmode="decimal" placeholder="ราคา" value="'+esc(x.price)+'"></div><textarea class="in" data-k="stock" placeholder="ใส่บัญชีที่จะขาย บรรทัดละ 1 บัญชี" style="font-size:14px">'+esc((ST.stock[x.id]||[]).join("\n"))+'</textarea><div class="row between"><span class="meta">สต็อก '+((ST.stock[x.id]||[]).length)+' บัญชี</span><button class="btn danger sm" type="button" data-act="row-del">ลบแพ็กเกจ</button></div></div>'}
 
 /* ---------- modal / toast / confirm ---------- */
 function openModal(html){$("#modal-root").innerHTML='<div class="modal-bg" data-act="bg"><div class="modal" role="dialog" aria-modal="true">'+html+'</div></div>';var f=$("#modal-root .modal");f&&f.scrollTo(0,0)}
@@ -624,7 +650,7 @@ function authModal(mode,next){
   if(next!==undefined)UI.afterAuth=next;UI.authMode=mode||"login";var reg=UI.authMode==="register";
   openModal('<div class="grab"></div><h2 class="h2">'+(reg?'สมัครสมาชิก':'เข้าสู่ระบบ')+'</h2><div class="seg"><button data-act="auth" data-v="login" class="'+(reg?'':'on')+'">เข้าสู่ระบบ</button><button data-act="auth" data-v="register" class="'+(reg?'on':'')+'">สมัครสมาชิก</button></div>'+
   (reg?'<form class="stack" data-form="register" autocomplete="on"><label class="f">ชื่อยูสเซอร์ (ภาษาอังกฤษหรือตัวเลข 3–20 ตัว)<input class="in" name="u" autocomplete="username" autocapitalize="off" required></label><label class="f">Gmail<input class="in" name="email" type="email" autocomplete="email" autocapitalize="off" placeholder="yourname@gmail.com" required></label><label class="f">ตั้งรหัสผ่าน (อย่างน้อย 6 ตัว)<input class="in" name="pw" type="password" autocomplete="new-password" required></label><label class="f">ยืนยันรหัสผ่าน<input class="in" name="pw2" type="password" autocomplete="new-password" required></label><button class="btn block pink" type="submit">สมัครสมาชิก</button></form>'
-  :'<form class="stack" data-form="signin" autocomplete="on"><label class="f">ยูสเซอร์ หรือ Gmail<input class="in" name="u" autocomplete="username" autocapitalize="off" required></label><label class="f">รหัสผ่าน<input class="in" name="pw" type="password" autocomplete="current-password" required></label><button class="btn block pink" type="submit">เข้าสู่ระบบ</button><span class="meta">ลืมรหัสผ่าน ติดต่อร้านทาง LINE เพื่อรีเซ็ต</span></form>'));
+  :'<form class="stack" data-form="signin" autocomplete="on"><label class="f">ยูสเซอร์ หรือ Gmail<input class="in" name="u" autocomplete="username" autocapitalize="off" required></label><label class="f">รหัสผ่าน<input class="in" name="pw" type="password" autocomplete="current-password" required></label><button class="btn block pink" type="submit">เข้าสู่ระบบ</button><button class="btn ghost sm" type="button" data-act="forgot">ลืมรหัสผ่าน</button></form>'));
 }
 function needLogin(next){if(me())return false;authModal("login",next);return true}
 function hashPw(u,pw){var str="kumo|"+u.toLowerCase()+"|"+pw,h1=0xdeadbeef,h2=0x41c6ce57;for(var i=0;i<str.length;i++){var c=str.charCodeAt(i);h1=Math.imul(h1^c,2654435761);h2=Math.imul(h2^c,1597334677)}
@@ -640,7 +666,8 @@ function readImage(file,max,cb){
 function render(){
   var r=route();if(r.name==="product"){}else if(!V[r.name])r={name:"home"};
   renderShell();
-  $("#app").innerHTML=V[r.name](r);
+  if(!ST.ready){$("#app").innerHTML='<div class="empty">'+mascot(100)+'กำลังโหลดร้าน…</div>';return}
+  $("#app").innerHTML=(ST.err?'<div class="note warn">'+esc(ST.err)+' <button class="btn soft sm" data-act="refresh">ลองใหม่</button></div>':'')+V[r.name](r);
   if(r.name==="topup")drawQr();
   if(r.name==="howto"&&UI.howOpen){var el=document.getElementById("how-"+UI.howOpen);if(el)el.scrollIntoView({block:"start"});UI.howOpen=null}
 }
@@ -650,17 +677,19 @@ window.addEventListener("hashchange",function(){closeModal();UI.sel=null;render(
 function buy(pid){
   var p=product(pid),pl=p&&p.plans.find(function(x){return x.id===UI.sel});
   if(!pl){toast("เลือกแพ็กเกจก่อนนะ");return}
-  if(!pl.stock.length||p.soldOut){toast("สินค้านี้หมดแล้ว");return}
+  if(!stockN(pl)||p.soldOut){toast("สินค้านี้หมดแล้ว");return}
   if(needLogin(function(){buy(pid)}))return;
   if(bal()<pl.price){
     openModal('<div class="grab"></div><div class="thanks">'+mascot(96)+'<h2 class="h2">ยอดเงินไม่พอ</h2><p class="sub">ต้องการ '+baht(pl.price)+' ฿ แต่มีอยู่ '+baht(bal())+' ฿</p></div><a class="btn block pink" href="#topup" data-act="topup-need" data-v="'+Math.ceil(pl.price-bal())+'">ไปเติมเงิน</a><button class="btn ghost block" data-act="close">ปิด</button>');return;
   }
   ask("ยืนยันการซื้อ",esc(p.name)+' · '+esc(pl.name)+'<br>ราคา <b>'+baht(pl.price)+' ฿</b> หักจากยอดเงินในร้าน',"ยืนยันซื้อ",function(){
-    var cred=pl.stock.shift();
-    me().balance=Math.round((me().balance-pl.price)*100)/100;
-    var o={id:"OD"+uid(),user:DATA.session,pid:p.id,product:p.name,plan:pl.name,price:pl.price,cred:cred,at:Date.now(),otp:{status:"none"}};
-    DATA.orders.push(o);saveCfg();saveData();render();
-    openModal('<div class="grab"></div><div class="thanks"><span class="bubble">thank you!</span><p class="sub">ซื้อสำเร็จ เลขออเดอร์ '+esc(o.id)+'</p></div>'+orderCard(o,false)+'<a class="btn block" href="#history">ดูในประวัติการซื้อ</a>');
+    sb.rpc("buy",{p_product:p.id,p_plan:pl.id}).then(function(r){
+      if(r.error){toast(errMsg(r.error));reload();return}
+      var o=normO(r.data);
+      reload().then(function(){
+        openModal('<div class="grab"></div><div class="thanks"><span class="bubble">thank you!</span><p class="sub">ซื้อสำเร็จ เลขออเดอร์ '+esc(o.id)+'</p></div>'+orderCard(o,false)+'<a class="btn block" href="#history">ดูในประวัติการซื้อ</a>');
+      });
+    });
   });
 }
 var ACT={
@@ -670,24 +699,25 @@ var ACT={
   copy:function(t){var v=t.dataset.v;function ok(){toast("คัดลอกแล้ว")}
     try{navigator.clipboard.writeText(v).then(ok,function(){fallbackCopy(v)})}catch(e){fallbackCopy(v)}},
   hist:function(t){UI.histTab=t.dataset.v;render()},
-  otp:function(t){var o=DATA.orders.find(function(x){return x.id===t.dataset.id});if(!o)return;
-    if(o.sample){o.otp={status:"ready",code:String(Math.floor(100000+Math.random()*900000)),at:Date.now()};saveData();render();toast("ออเดอร์ตัวอย่าง: สุ่มรหัสให้ดูหน้าตา");return}
-    o.otp={status:"waiting",req:Date.now()};saveData();render();toast("ส่งคำขอ OTP แล้ว รอรหัสสักครู่")},
-  "otp-cancel":function(t){var o=DATA.orders.find(function(x){return x.id===t.dataset.id});if(o){o.otp={status:"none"};saveData();render()}},
-  refresh:function(){var l=lsGet("kumo_data");if(l)DATA=l;render();toast("อัปเดตแล้ว")},
+  otp:function(t){sb.rpc("request_otp",{p_order:t.dataset.id}).then(function(r){if(r.error)toast(errMsg(r.error));else toast("ส่งคำขอ OTP แล้ว รอรหัสสักครู่");reload()})},
+  "otp-cancel":function(t){sb.rpc("request_otp",{p_order:t.dataset.id,p_cancel:true}).then(function(){reload()})},
+  refresh:function(){reload().then(function(){toast(ST.err?ST.err:"อัปเดตแล้ว")})},
   amt:function(t){UI.topAmt=Number(t.dataset.v);render()},
   method:function(t){UI.topMethod=t.dataset.v;render()},
   "topup-need":function(t){UI.topAmt=Math.max(Number(t.dataset.v),Number(CFG.payment.minTopup)||0)},
   "howto-go":function(t){UI.howOpen=t.dataset.pid},
   "report-go":function(t){UI.reportOrder=t.dataset.id},
   auth:function(t,e){if(e)e.preventDefault();authModal(t.dataset.v||"login")},
-  signout:function(){DATA.session=null;saveData();render();toast("ออกจากระบบแล้ว")},
+  signout:function(){sb.auth.signOut().then(function(){reload();toast("ออกจากระบบแล้ว")})},
+  forgot:function(){var v=($('form[data-form=signin] [name=u]')||{}).value||"";v=v.trim();if(!v){toast("กรอกยูสเซอร์หรือ Gmail ก่อน แล้วกด ลืมรหัสผ่าน");return}
+    (v.indexOf("@")>0?Promise.resolve({data:v.toLowerCase()}):sb.rpc("login_email",{ident:v})).then(function(r){if(!r.data){toast("ไม่พบยูสเซอร์นี้");return}
+      sb.auth.resetPasswordForEmail(r.data,{redirectTo:location.origin+location.pathname}).then(function(x){if(x.error)toast(errMsg(x.error));else{closeModal();openModal('<div class="grab"></div><div class="thanks">'+mascot(90)+'<h2 class="h2">ส่งลิงก์แล้ว</h2><p class="sub">เปิด Gmail แล้วกดลิงก์ในอีเมลเพื่อตั้งรหัสผ่านใหม่</p></div><button class="btn block" data-act="close">ตกลง</button>')}})})},
   close:closeModal,
   bg:function(t,e){if(e.target===t)closeModal()},
   "confirm-ok":function(){var cb=confirmCb;confirmCb=null;closeModal();cb&&cb()},
-  logout:function(){UI.admin=false;try{sessionStorage.removeItem("kumo_admin")}catch(e){}render()},
+  logout:function(){ACT.signout()},
   atab:function(t){UI.adminTab=t.dataset.v;render()},
-  "tu-ok":function(t){var x=DATA.topups.find(function(y){return y.id===t.dataset.id});if(!x)return;var a=acct(x.user);if(!a){toast("ไม่พบบัญชีสมาชิกของสลิปนี้");return}x.status="ok";a.balance=Math.round((a.balance+Number(x.amount))*100)/100;saveData();render();toast("เติม "+baht(x.amount)+" ฿ ให้ลูกค้าแล้ว")},
+  "tu-ok":function(t){var x=DATA.topups.find(function(y){return y.id===t.dataset.id});if(!x)return;sb.rpc("approve_topup",{p_id:x.id}).then(function(r){if(r.error)toast(errMsg(r.error));else toast("เติม "+baht(x.amount)+" ฿ ให้ "+(x.user||"ลูกค้า")+" แล้ว");reload()})},
   "tu-no":function(t){var x=DATA.topups.find(function(y){return y.id===t.dataset.id});if(!x)return;
     openModal('<div class="grab"></div><h2 class="h2">ไม่อนุมัติสลิป</h2><form class="stack" data-form="tu-no" data-id="'+esc(x.id)+'"><label class="f">เหตุผลที่แจ้งลูกค้า<input class="in" name="reason" value="สลิปไม่ถูกต้องหรือยอดไม่ตรง"></label><button class="btn danger block" type="submit">ยืนยันไม่อนุมัติ</button><button class="btn ghost block" type="button" data-act="close">ยกเลิก</button></form>')},
   "p-new":function(){productEditor(null)},
@@ -700,15 +730,8 @@ var ACT={
   "bank-add":function(){$("#banks").insertAdjacentHTML("beforeend",bankEd({bank:"",number:"",name:""}))},
   "row-del":function(t){var r=t.closest(".plan-ed");r&&r.remove()},
   "qr-del":function(){CFG.payment.qrImage="";saveCfg();render()},
-  "dl-site":function(){
-    var c=clone(CFG);if(!$("#with-stock").checked)c.products.forEach(function(p){p.plans.forEach(function(x){x.stock=[]})});
-    var json=JSON.stringify(c).replace(/</g,"\\u003c");
-    var html=SOURCE.replace(/(<script type="application\/json" id="shop-config">)[\s\S]*?(<\/script>)/,function(m,a,b){return a+json+b});
-    try{var a=document.createElement("a");a.href=URL.createObjectURL(new Blob([html],{type:"text/html"}));a.download="index.html";document.body.appendChild(a);a.click();a.remove();toast("เริ่มดาวน์โหลดไฟล์แล้ว")}catch(e){toast("ดาวน์โหลดจากหน้านี้ไม่ได้ ให้เปิดไฟล์เว็บในเบราว์เซอร์แทน")}
-  },
   "json-copy":function(){var v=$("#json").value;try{navigator.clipboard.writeText(v).then(function(){toast("คัดลอกข้อมูลสำรองแล้ว")},function(){fallbackCopy(v)})}catch(e){fallbackCopy(v)}},
-  "json-import":function(){try{var o=JSON.parse($("#json").value);if(!o.cfg||!o.cfg.products)throw 0;CFG=o.cfg;if(o.data)DATA=o.data;saveCfg();saveData();render();toast("นำเข้าข้อมูลแล้ว")}catch(e){toast("ข้อความนี้ไม่ใช่ข้อมูลสำรองของร้าน ลองคัดลอกใหม่ทั้งหมด")}},
-  reset:function(){ask("ล้างข้อมูลทั้งหมด","สินค้า ราคา ออเดอร์ ยอดเงิน และการตั้งค่าในเครื่องนี้จะกลับเป็นค่าเริ่มต้น","ล้างข้อมูล",function(){try{localStorage.removeItem("kumo_cfg");localStorage.removeItem("kumo_data")}catch(e){}location.reload()},true)}
+  "json-import":function(){try{var o=JSON.parse($("#json").value);if(o.cfg)o=o.cfg;if(!o.products)throw 0;CFG=stripStock(o);fillDefaults();saveCfg();render();toast("นำเข้าข้อมูลแล้ว")}catch(e){toast("ข้อความนี้ไม่ใช่ข้อมูลสำรองของร้าน ลองคัดลอกใหม่ทั้งหมด")}},
 };
 function fallbackCopy(v){var ta=document.createElement("textarea");ta.value=v;ta.style.position="fixed";ta.style.opacity="0";document.body.appendChild(ta);ta.select();var ok=false;try{ok=document.execCommand("copy")}catch(e){}ta.remove();toast(ok?"คัดลอกแล้ว":"คัดลอกไม่ได้ กดค้างที่ข้อความเพื่อคัดลอกเอง")}
 
@@ -729,42 +752,58 @@ document.addEventListener("change",function(e){
     if(k==="reportImg"&&UI.rDraft){$("#r-order").value=UI.rDraft.o;$("#r-topic").value=UI.rDraft.t;$("#r-detail").value=UI.rDraft.d}});
 });
 var FORMS={
-  login:function(f){if($("#pin").value===String(CFG.shop.adminPin)){UI.admin=true;try{sessionStorage.setItem("kumo_admin","1")}catch(e){}render()}else toast("รหัส PIN ไม่ถูกต้อง")},
+
   register:function(f){
-    var u=f.u.value.trim(),em=f.email.value.trim().toLowerCase(),pw=f.pw.value;
+    var u=f.u.value.trim(),em=f.email.value.trim().toLowerCase(),pw=f.pw.value,btn=$("button[type=submit]",f);
     if(!/^[A-Za-z0-9_.]{3,20}$/.test(u)){toast("ยูสเซอร์ใช้ได้เฉพาะภาษาอังกฤษ ตัวเลข _ . 3–20 ตัว");return}
     if(!/^[^\s@]+@gmail\.com$/.test(em)){toast("กรอก Gmail ให้ถูกต้อง เช่น name@gmail.com");return}
     if(pw.length<6){toast("รหัสผ่านต้องมีอย่างน้อย 6 ตัว");return}
     if(pw!==f.pw2.value){toast("รหัสผ่านทั้งสองช่องไม่ตรงกัน");return}
-    if(DATA.accounts.some(function(a){return a.u.toLowerCase()===u.toLowerCase()})){toast("ยูสเซอร์นี้มีคนใช้แล้ว ลองชื่ออื่น");return}
-    if(DATA.accounts.some(function(a){return a.email===em})){toast("Gmail นี้สมัครไว้แล้ว ให้เข้าสู่ระบบแทน");return}
-    DATA.accounts.push({u:u,email:em,pw:hashPw(u,pw),balance:0,at:Date.now()});DATA.session=u;saveData();closeModal();render();toast("สมัครสมาชิกสำเร็จ ยินดีต้อนรับ "+u);
-    var n=UI.afterAuth;UI.afterAuth=null;n&&n()},
+    btn.disabled=true;
+    sb.rpc("username_taken",{u:u}).then(function(t){
+      if(t.data){btn.disabled=false;toast("ยูสเซอร์นี้มีคนใช้แล้ว ลองชื่ออื่น");return}
+      return sb.auth.signUp({email:em,password:pw,options:{data:{username:u},emailRedirectTo:location.origin+location.pathname}}).then(function(r){
+        btn.disabled=false;
+        if(r.error){toast(errMsg(r.error));return}
+        if(!r.data.session){openModal('<div class="grab"></div><div class="thanks">'+mascot(90)+'<h2 class="h2">ยืนยันอีเมลก่อนนะ</h2><p class="sub">ส่งลิงก์ยืนยันไปที่ '+esc(em)+' แล้ว กดลิงก์ในอีเมล แล้วกลับมาเข้าสู่ระบบ</p></div><button class="btn block" data-act="close">ตกลง</button>');return}
+        closeModal();reload().then(function(){toast("สมัครสมาชิกสำเร็จ ยินดีต้อนรับ "+u);var n=UI.afterAuth;UI.afterAuth=null;n&&n()});
+      });
+    });
+  },
   signin:function(f){
-    var id=f.u.value.trim().toLowerCase(),a=DATA.accounts.find(function(x){return x.u.toLowerCase()===id||x.email===id});
-    if(!a||a.pw!==hashPw(a.u,f.pw.value)){toast("ยูสเซอร์หรือรหัสผ่านไม่ถูกต้อง");return}
-    DATA.session=a.u;saveData();closeModal();render();toast("เข้าสู่ระบบแล้ว");var n=UI.afterAuth;UI.afterAuth=null;n&&n()},
-  madjust:function(f){var a=acct(f.dataset.u),v=Number(f.v.value);if(!a||!v){toast("ใส่จำนวนเงินก่อน");return}a.balance=Math.round((a.balance+v)*100)/100;saveData();render();toast("ปรับยอดของ "+a.u+" แล้ว")},
-  mreset:function(f){var a=acct(f.dataset.u),pw=f.pw.value;if(!a||pw.length<6){toast("รหัสใหม่ต้องมีอย่างน้อย 6 ตัว");return}a.pw=hashPw(a.u,pw);saveData();render();toast("ตั้งรหัสผ่านใหม่ให้ "+a.u+" แล้ว")},
+    var id=f.u.value.trim(),pw=f.pw.value,btn=$("button[type=submit]",f);btn.disabled=true;
+    (id.indexOf("@")>0?Promise.resolve({data:id.toLowerCase()}):sb.rpc("login_email",{ident:id})).then(function(r){
+      if(!r.data){btn.disabled=false;toast("ยูสเซอร์หรือรหัสผ่านไม่ถูกต้อง");return}
+      return sb.auth.signInWithPassword({email:r.data,password:pw}).then(function(x){
+        btn.disabled=false;if(x.error){toast(errMsg(x.error));return}
+        closeModal();reload().then(function(){toast("เข้าสู่ระบบแล้ว");var n=UI.afterAuth;UI.afterAuth=null;n&&n()});
+      });
+    });
+  },
+  newpw:function(f){var pw=f.pw.value;if(pw.length<6){toast("รหัสผ่านต้องมีอย่างน้อย 6 ตัว");return}
+    sb.auth.updateUser({password:pw}).then(function(r){if(r.error)toast(errMsg(r.error));else{closeModal();toast("ตั้งรหัสผ่านใหม่แล้ว");reload()}})},
+  madjust:function(f){var a=acct(f.dataset.u),v=Number(f.v.value);if(!a||!v){toast("ใส่จำนวนเงินก่อน");return}sb.rpc("admin_adjust",{p_user:a.id,p_delta:v}).then(function(r){if(r.error)toast(errMsg(r.error));else toast("ปรับยอดของ "+a.u+" แล้ว");reload()})},
+
   topup:function(){
     var a=Number(UI.topAmt);if(!(a>0)){toast("ใส่จำนวนเงินก่อนนะ");return}
     if(a<Number(CFG.payment.minTopup)){toast("เติมขั้นต่ำ "+baht(CFG.payment.minTopup)+" ฿");return}
     if(!UI.slip){toast("แนบรูปสลิปก่อนส่ง");return}
     if(needLogin(function(){FORMS.topup()}))return;
-    var t={id:"TP"+uid(),amount:a,method:UI.topMethod==="bank"&&CFG.payment.banks.length?"บัญชีอื่น":(CFG.payment.mainLabel||"พร้อมเพย์"),slip:UI.slip,at:Date.now(),status:"wait",user:DATA.session};
-    DATA.topups.push(t);UI.slip="";if(saveData()){render();openModal('<div class="grab"></div><div class="thanks">'+mascot(96)+'<span class="bubble" style="font-size:28px">ส่งสลิปแล้ว</span><p class="sub">แอดมินจะตรวจและเติมยอด '+baht(a)+' ฿ ให้เร็ว ๆ นี้</p></div><button class="btn block" data-act="close">ตกลง</button>')}
+    var method=UI.topMethod==="bank"&&CFG.payment.banks.length?"บัญชีอื่น":(CFG.payment.mainLabel||"พร้อมเพย์"),btn=$("form[data-form=topup] button[type=submit]");if(btn)btn.disabled=true;
+    sb.from("topups").insert({amount:a,method:method,slip:UI.slip}).then(function(r){if(btn)btn.disabled=false;if(r.error){toast(errMsg(r.error));return}UI.slip="";reload().then(function(){
+      openModal('<div class="grab"></div><div class="thanks">'+mascot(96)+'<span class="bubble" style="font-size:28px">ส่งสลิปแล้ว</span><p class="sub">แอดมินจะตรวจและเติมยอด '+baht(a)+' ฿ ให้เร็ว ๆ นี้</p></div><button class="btn block" data-act="close">ตกลง</button>')})});
   },
   report:function(){
     var d=$("#r-detail").value.trim();if(!d){toast("ใส่รายละเอียดก่อนนะ");return}
     if(needLogin(function(){}))return;
-    DATA.tickets.push({id:"RP"+uid(),order:$("#r-order").value,topic:$("#r-topic").value,detail:d,img:UI.reportImg,at:Date.now(),status:"new",user:DATA.session});
-    UI.reportImg="";UI.reportOrder=null;saveData();render();toast("ส่งเรื่องให้ร้านแล้ว");
+    sb.from("tickets").insert({order_id:$("#r-order").value||null,topic:$("#r-topic").value,detail:d,img:UI.reportImg||null}).then(function(r){if(r.error){toast(errMsg(r.error));return}
+    UI.reportImg="";UI.reportOrder=null;reload().then(function(){toast("ส่งเรื่องให้ร้านแล้ว")})});
   },
-  setotp:function(f){var o=DATA.orders.find(function(x){return x.id===f.dataset.id});var c=f.code.value.trim();if(!c){toast("กรอกรหัสก่อนส่ง");return}o.otp={status:"ready",code:c,at:Date.now()};saveData();render();toast("ส่งรหัสให้ลูกค้าแล้ว")},
-  "tu-no":function(f){var x=DATA.topups.find(function(y){return y.id===f.dataset.id});x.status="no";x.reason=f.reason.value;saveData();closeModal();render();toast("แจ้งไม่อนุมัติแล้ว")},
-  ticket:function(f){var t=DATA.tickets.find(function(x){return x.id===f.dataset.id});t.reply=f.reply.value;t.status=f.status.value;saveData();render();toast("บันทึกแล้ว")},
-  shop:function(f){var s=CFG.shop;["name","tagline","announce","footer","adminPin","otpLine"].forEach(function(k){s[k]=f[k].value});s.otpTtl=Number(f.otpTtl.value)||10;
-    if(!s.adminPin.trim()){s.adminPin="1234"}CFG.generalHowto=f.generalHowto.value;CFG.reportTopics=f.reportTopics.value.split("\n").map(function(x){return x.trim()}).filter(Boolean);saveCfg();render();toast("บันทึกข้อมูลร้านแล้ว")},
+  setotp:function(f){var c=f.code.value.trim();if(!c){toast("กรอกรหัสก่อนส่ง");return}sb.from("orders").update({otp:{status:"ready",code:c,at:Date.now()}}).eq("id",f.dataset.id).then(function(r){if(r.error)toast(errMsg(r.error));else toast("ส่งรหัสให้ลูกค้าแล้ว");reload()})},
+  "tu-no":function(f){sb.from("topups").update({status:"no",reason:f.reason.value}).eq("id",f.dataset.id).then(function(r){closeModal();if(r.error)toast(errMsg(r.error));else toast("แจ้งไม่อนุมัติแล้ว");reload()})},
+  ticket:function(f){sb.from("tickets").update({reply:f.reply.value,status:f.status.value}).eq("id",f.dataset.id).then(function(r){if(r.error)toast(errMsg(r.error));else toast("บันทึกแล้ว");reload()})},
+  shop:function(f){var s=CFG.shop;["name","tagline","announce","footer","otpLine"].forEach(function(k){s[k]=f[k].value});s.otpTtl=Number(f.otpTtl.value)||10;
+    CFG.generalHowto=f.generalHowto.value;CFG.reportTopics=f.reportTopics.value.split("\n").map(function(x){return x.trim()}).filter(Boolean);saveCfg();render();toast("บันทึกข้อมูลร้านแล้ว")},
   contact:function(f){Object.keys(CFG.contact).forEach(function(k){if(f[k])CFG.contact[k]=f[k].value});saveCfg();render();toast("บันทึกช่องทางติดต่อแล้ว")},
   pay:function(f){var p=CFG.payment;p.mainLabel=f.mainLabel.value.trim();p.promptpay=f.promptpay.value.trim();p.promptpayName=f.promptpayName.value;p.autoQr=f.autoQr.checked;p.minTopup=Number(f.minTopup.value)||0;p.note=f.note.value;
     p.banks=$$("[data-bank]",f).map(function(r){return {bank:$('[data-k="bank"]',r).value,number:$('[data-k="number"]',r).value,name:$('[data-k="name"]',r).value}}).filter(function(b){return b.bank||b.number});saveCfg();render();toast("บันทึกช่องทางชำระเงินแล้ว")},
@@ -774,16 +813,20 @@ var FORMS={
     var plans=$$("[data-plan]",f).map(function(r,i){return {id:r.dataset.plan||(id+"-"+uid().toLowerCase()),name:$('[data-k="name"]',r).value.trim()||"แพ็กเกจ "+(i+1),price:Number($('[data-k="price"]',r).value)||0,stock:$('[data-k="stock"]',r).value.split("\n").map(function(s){return s.trim()}).filter(Boolean)}});
     if(!plans.length){toast("ต้องมีอย่างน้อย 1 แพ็กเกจ");return}
     var p={id:id,name:name,label:f.label.value.trim()||name.slice(0,8),color:f.color.value,cat:f.cat.value,desc:f.desc.value,howto:f.howto.value,otpMode:f.otpMode.value,otpUrl:f.otpUrl.value.trim(),active:f.active.checked,soldOut:f.soldOut.checked,plans:plans};
-    var i=CFG.products.findIndex(function(x){return x.id===id});if(i>=0)CFG.products[i]=p;else CFG.products.push(p);
-    saveCfg();closeModal();render();toast("บันทึกสินค้าแล้ว");
+    var i=CFG.products.findIndex(function(x){return x.id===id});
+    var jobs=p.plans.filter(function(x){return (ST.stock[x.id]||[]).join("\n")!==x.stock.join("\n")}).map(function(x){return sb.rpc("admin_set_stock",{p_plan:x.id,p_creds:x.stock})});
+    p.plans.forEach(function(x){delete x.stock});if(i>=0)CFG.products[i]=p;else CFG.products.push(p);
+    Promise.all([saveCfg()].concat(jobs)).then(function(rs){var bad=rs.find(function(r){return r&&r.error});closeModal();if(bad)toast("บันทึกสต็อกไม่สำเร็จ: "+errMsg(bad.error));else toast("บันทึกสินค้าแล้ว");reload()});
   }
 };
 document.addEventListener("submit",function(e){var f=e.target,k=f.dataset.form;if(!k||!FORMS[k])return;e.preventDefault();FORMS[k](f)});
 // keep the OTP box fresh when another tab (admin) answers
-window.addEventListener("storage",function(e){if(e.key==="kumo_data"||e.key==="kumo_cfg"){CFG=lsGet("kumo_cfg")||CFG;DATA=lsGet("kumo_data")||DATA;if(!$("#modal-root").innerHTML)render()}});
-setInterval(function(){var r=route().name;if((r==="history"||r==="otp")&&!$("#modal-root").innerHTML&&document.activeElement.tagName!=="INPUT")render()},30000);
+
+setInterval(function(){var r=route().name;if((r==="history"||r==="otp"||r==="admin"||r==="topup")&&!$("#modal-root").innerHTML&&!/INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName))reload()},30000);
+if(sb)sb.auth.onAuthStateChange(function(ev){if(ev==="PASSWORD_RECOVERY"){setTimeout(function(){openModal('<div class="grab"></div><h2 class="h2">ตั้งรหัสผ่านใหม่</h2><form class="stack" data-form="newpw"><label class="f">รหัสผ่านใหม่ (อย่างน้อย 6 ตัว)<input class="in" name="pw" type="password" autocomplete="new-password" required></label><button class="btn block pink" type="submit">บันทึกรหัสผ่าน</button></form>')},300)}});
 
 render();
+reload();
 })();
 </script>
 
